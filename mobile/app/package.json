@@ -1,0 +1,21 @@
+{
+  "name": "haviquant-mobile",
+  "version": "17.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
+    "web": "expo start --web"
+  },
+  "dependencies": {
+    "expo": "^53.0.0",
+    "react": "19.0.0",
+    "react-native": "0.79.2",
+    "@expo/vector-icons": "^14.1.0"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  }
+}
