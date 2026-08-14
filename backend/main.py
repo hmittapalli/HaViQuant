@@ -8,7 +8,16 @@ from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends
+from pydantic import BaseModel
+
+from backend.auth import (
+    LoginRequest,
+    TokenResponse,
+    authenticate_user,
+    create_access_token,
+    get_current_user,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.data.live_quotes import get_live_quote
@@ -23,7 +32,7 @@ from app.portfolio.portfolio_intelligence import (
 
 app = FastAPI(
     title="HaViQuant Complete API",
-    version="17.0.0",
+    version="19.0.0",
     description="Complete API adapter over the existing HaViQuant intelligence engines."
 )
 app.add_middleware(
@@ -336,8 +345,33 @@ def risk():
 def overview(ticker: str, period: str = Query("1y", pattern=PERIOD_RE)):
     return dashboard(ticker, period)
 
+@app.post("/api/v1/auth/login", response_model=TokenResponse)
+def login(request: LoginRequest):
+    if not authenticate_user(request.username, request.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid username or password",
+        )
+
+    token = create_access_token(request.username)
+
+    return TokenResponse(
+        access_token=token,
+        token_type="bearer",
+        expires_in=60 * 60 * 8,
+    )
+
+
+@app.get("/api/v1/auth/me")
+def auth_me(current_user: str = Depends(get_current_user)):
+    return {
+        "authenticated": True,
+        "username": current_user,
+    }
+
+
 @app.get("/api/v1/portfolio")
-def portfolio():
+def portfolio(current_user: str = Depends(get_current_user)):
     try:
         payload = json.loads(PORTFOLIO_FILE.read_text())
         rows = portfolio_rows(payload)
@@ -347,7 +381,10 @@ def portfolio():
         raise HTTPException(500, str(e))
 
 @app.get("/api/v1/portfolio/{ticker}")
-def portfolio_ticker(ticker: str):
+def portfolio_ticker(
+    ticker: str,
+    current_user: str = Depends(get_current_user),
+):
     try:
         return safe(analyze_ticker(ticker.upper()))
     except Exception as e:
