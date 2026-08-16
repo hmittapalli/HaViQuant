@@ -9,7 +9,17 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION = "26.2.0"
+try:
+    # Works when FastAPI is started from the project root.
+    from backend.company.intelligence_engine import get_company_intelligence
+except Exception:
+    try:
+        # Fallback when running with backend as the working directory.
+        from company.intelligence_engine import get_company_intelligence
+    except Exception:
+        get_company_intelligence = None
+
+APP_VERSION = "26.1.0"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -238,6 +248,17 @@ def trade_plan(ticker:str, capital:float=10000, risk_pct:float=1.0, stop_pct:flo
     levels={"entry":entry,"stop":stop,"target1":float(a["levels"]["target1"]),"target2":float(a["levels"]["target2"]),"target3":float(a["levels"]["target3"])}
     profits={k:shares*(levels[k]-entry) for k in ("target1","target2","target3")}; rr={k:(levels[k]-entry)/risk_per if risk_per else 0 for k in ("target1","target2","target3")}
     return clean({"ticker":t,"capital":capital,"entry":entry,"shares_available":shares_available,"shares":shares,"capital_used":used,"risk_pct":risk_pct,"risk_budget":risk_budget,"stop_pct":stop_pct,"risk_per_share":risk_per,"maximum_loss":shares*risk_per,"maximum_loss_full_position":shares_available*risk_per,"target1":levels["target1"],"target2":levels["target2"],"target3":levels["target3"],"profit_t1":profits["target1"],"profit_t2":profits["target2"],"profit_t3":profits["target3"],"risk_reward":rr,"eta_days":a["eta_days"],"suggested_daily_stop":capital*.02,"signal":a["signal"],"setup_quality":a["setup_quality"],"note":"Position size is constrained by both available capital and risk budget. Target timing is an estimate, not a guarantee."})
+
+
+@app.get("/api/v1/company-intelligence/{ticker}")
+def company_intelligence(ticker: str, quarters: int = 10):
+    t = norm_ticker(ticker)
+    if get_company_intelligence is None:
+        raise HTTPException(500, "Company Intelligence engine is not available.")
+    try:
+        return clean(get_company_intelligence(t, quarters=max(1, min(20, int(quarters)))))
+    except Exception as e:
+        raise HTTPException(502, f"Company Intelligence failed for {t}: {e}")
 
 # Compatibility routes
 @app.get("/api/v1/stock/{ticker}")

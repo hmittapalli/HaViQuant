@@ -18,9 +18,139 @@ function metric(label,value,cls=""){return `<div class="metric ${cls}"><small>${
 function rows(obj){return Object.entries(obj).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("")}
 function sentimentBadge(s){const x=s||{label:"Neutral",score:0,impact:"Low"};const c=x.label.toLowerCase();const dot=c==="positive"?"positive":c==="negative"?"negative":"neutral";return `<span class="sentiment ${dot}"><i></i>${esc(x.label.toUpperCase())}</span><span class="impact">${esc(x.impact||"Low")} IMPACT</span>`}
 function newsItem(n){return `<div class="newsitem"><div class="newsline">${sentimentBadge(n.sentiment)}<span class="newsage">${esc(n.recency||"")}</span></div><a target="_blank" rel="noopener" href="${esc(n.url||"#")}">${esc(n.title)}</a><small>${esc(n.publisher||"")} · ${esc(n.published||n.published_iso||"")}</small></div>`}
+
+function ciVal(v, fallback="—"){return v===null||v===undefined||v===""?fallback:typeof v==="number"?v.toLocaleString(undefined,{maximumFractionDigits:2}):String(v)}
+function ciMoney(v){return v===null||v===undefined||!Number.isFinite(Number(v))?"—":money(v)}
+function ciPct(v){if(v===null||v===undefined||!Number.isFinite(Number(v)))return "—";return `${(Number(v)*100).toFixed(2)}%`}
+function ciTable(headers, rowsData){
+  if(!Array.isArray(rowsData)||!rowsData.length)return `<div class="empty">No provider data returned.</div>`;
+  return `<div class="tablewrap"><table class="ci-table"><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rowsData.map(r=>`<tr>${r.map(v=>`<td>${esc(ciVal(v))}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+function ciList(items){
+  if(!Array.isArray(items)||!items.length)return `<div class="empty">No items returned.</div>`;
+  return `<ul class="ci-list">${items.map(x=>`<li>${esc(typeof x==="string"?x:(x?.name||x?.description||x?.title||JSON.stringify(x)))}</li>`).join("")}</ul>`;
+}
+function ciScore(v){return v===null||v===undefined?"—":`${Number(v).toFixed(1)}/100`}
+function renderCompanyIntelligence(x){
+  const p=x?.profile||{}, q=x?.quarters||[], e=x?.earnings||{}, own=x?.ownership||{};
+  const comp=x?.competition||{}, val=x?.valuation||{}, stock=x?.stock_level||{}, scores=x?.scores||{};
+  const demand=x?.products_demand||{}, gov=x?.governance_ethics||{}, risks=x?.risks||{};
+  const ownershipRows=(own.institutional_holders||[]).map(r=>[
+    r.holder,r.shares,r.date_reported,ciMoney(r.value),r.pct_out==null?"—":ciPct(r.pct_out),r.pct_change==null?"—":ciPct(r.pct_change)
+  ]);
+  const insiderRows=(own.insider_transactions||[]).map(r=>[
+    r.insider,r.relation,r.transaction,r.date,r.shares,ciMoney(r.value)
+  ]);
+  const purchaseRows=(own.insider_purchases||[]).map(r=>[
+    r.insider,r.relation,r.transaction,r.date,r.shares,ciMoney(r.value)
+  ]);
+  const quarterRows=q.map(r=>[
+    r.period||r.date||"—",ciMoney(r.revenue),ciMoney(r.net_income),
+    r.revenue_qoq_pct==null?"—":`${Number(r.revenue_qoq_pct).toFixed(2)}%`,
+    r.net_margin_pct==null?"—":`${Number(r.net_margin_pct).toFixed(2)}%`
+  ]);
+  return `
+  <div class="ci-grid">
+    ${card("Company Profile",rows({
+      "Company":p.name||x.ticker,
+      "Ticker":p.ticker||x.ticker,
+      "Sector":p.sector,
+      "Industry":p.industry,
+      "Country":p.country,
+      "Exchange":p.exchange,
+      "Currency":p.currency,
+      "Employees":p.employees==null?"—":Number(p.employees).toLocaleString(),
+      "Market Cap":ciMoney(p.market_cap),
+      "Website":p.website
+    }))}
+    ${card("Live Stock Level",rows({
+      "Price":ciMoney(stock.price||x.live_quote?.price),
+      "Previous Close":ciMoney(stock.previous_close||x.live_quote?.previous),
+      "Change":ciMoney(stock.change||x.live_quote?.change),
+      "Change %":x.live_quote?.change_pct==null?"—":`${Number(x.live_quote.change_pct).toFixed(2)}%`,
+      "Beta":ciVal(stock.beta),
+      "52W High":ciMoney(stock.fifty_two_week_high),
+      "52W Low":ciMoney(stock.fifty_two_week_low)
+    }))}
+  </div>
+  ${card("Business Overview",`<p class="ci-description">${esc(p.summary||p.description||"Business summary unavailable.")}</p>`)}
+  <div class="ci-grid">
+    ${card("Company Scores",rows({
+      "Overall":ciScore(scores.overall_company_score),
+      "Business Quality":ciScore(scores.business_quality),
+      "Growth":ciScore(scores.growth_score),
+      "Financial Strength":ciScore(scores.financial_strength),
+      "Valuation":ciScore(scores.valuation_score),
+      "Risk":ciScore(scores.risk)
+    }))}
+    ${card("Valuation",rows({
+      "Analyst Target Reference":ciMoney(val.target_mean),
+      "Current Price":ciMoney(val.current_price),
+      "Reference Upside":val.reference_upside_pct==null?"—":`${Number(val.reference_upside_pct).toFixed(2)}%`,
+      "P/S":ciVal(val.price_to_sales),
+      "P/B":ciVal(val.price_to_book),
+      "EV/Revenue":ciVal(val.enterprise_to_revenue),
+      "EV/EBITDA":ciVal(val.enterprise_to_ebitda),
+      "Trailing P/E":ciVal(p.trailing_pe),
+      "Forward P/E":ciVal(p.forward_pe),
+      "Profit Margin":ciPct(p.profit_margin),
+      "ROE":ciPct(p.roe),
+      "Revenue Growth":ciPct(p.revenue_growth),
+      "Earnings Growth":ciPct(p.earnings_growth)
+    }))}
+  </div>
+  ${card("Products & Demand",`
+    <div class="ci-grid">
+      ${rows({
+        "Current Demand":demand.current_demand_proxy||demand.current_status||"—",
+        "Future Demand":demand.future_demand?.status||demand.future_demand?.assessment||"—"
+      })}
+    </div>
+    ${demand.future_demand?.note?`<div class="callout">${esc(demand.future_demand.note)}</div>`:""}
+  `)}
+  ${card("Quarterly Financials",ciTable(["Period","Revenue","Net Income","Revenue Growth","Net Margin"],quarterRows))}
+  <div class="ci-grid">
+    ${card("Earnings",rows({
+      "Next Earnings":e.next_earnings,
+      "Last Fiscal Year":e.last_fiscal_year,
+      "Earnings Growth":e.earnings_growth_pct==null?"—":`${Number(e.earnings_growth_pct).toFixed(2)}%`,
+      "Forward EPS":e.forward_eps,
+      "Trailing EPS":e.trailing_eps
+    }))}
+    ${card("Backlog / Orders",typeof x.backlog==="object"?rows(x.backlog):`<p>${esc(ciVal(x.backlog))}</p>`)}
+  </div>
+  ${card("Institutional Ownership",ciTable(["Holder","Shares","Reported","Value","% Out","% Change"],ownershipRows))}
+  ${card("Insider / Employee Purchase Activity",`
+    <div class="callout">Provider-reported insider activity. Officers/directors and other reporting insiders are not automatically classified as ordinary employees.</div>
+    ${ciTable(["Insider","Relation","Transaction","Date","Shares","Value"],purchaseRows)}
+  `)}
+  ${card("Insider Transactions",ciTable(["Insider","Relation","Transaction","Date","Shares","Value"],insiderRows))}
+  ${card("Major Holders",ciTable(["Value","Category"],(own.major_holders||[]).map(r=>[r.value,r.label])))}
+  ${card("Competition",typeof comp==="object"?`
+    ${comp.summary?`<p class="ci-description">${esc(comp.summary)}</p>`:""}
+    ${ciList(comp.competitors||comp.items||[])}
+  `:ciList(comp))}
+  <div class="ci-grid">
+    ${card("Governance & Ethics",typeof gov==="object"?`
+      ${rows({"Status":gov.status||"—","Filing Count":gov.filing_count??"—"})}
+      ${gov.important_note?`<div class="callout">${esc(gov.important_note)}</div>`:""}
+      ${ciList(gov.research_targets||[])}
+    `:`<p>${esc(ciVal(gov))}</p>`)}
+    ${card("Risks",typeof risks==="object"?`
+      ${ciList(risks.items||risks.key_risks||[])}
+      ${risks.summary?`<p class="ci-description">${esc(risks.summary)}</p>`:""}
+    `:ciList(risks))}
+  </div>
+  ${card("Research Completeness",rows(x.research_status||{}))}
+  ${card("Sources & Architecture",`
+    ${rows(x.sources||{})}
+    <div class="callout">Company Intelligence is separate from the production BUY/SELL Decision Engine. It does not silently change the trading signal.</div>
+  `)}
+  `;
+}
 function renderModule(page){const a=state.analysis||{};let html=`<div class="crumb">Command Center › ${esc(page)}</div><div class="hero"><div><div class="eyebrow">HA VI QUANT MODULE</div><h1>${esc(page)}</h1><p>Selected ticker: <b>${esc(state.ticker)}</b> · Dynamic data stays tied to the selected symbol.</p></div></div>`;
  if(page==="Dashboard")html+=`<div class="pagegrid">${metric("Ticker",state.ticker)}${metric("Price",money(a.price),"good")}${metric("Signal",a.signal||"—")}${metric("Setup quality",a.setup_quality?`${a.setup_quality}/100`:"—")}</div>${card("Market Snapshot",rows({"Trend":a.trend||"—","Momentum":a.momentum||"—","Volatility":a.volatility||"—","RSI":a.rsi?.toFixed?.(1)||"—","ATR":money(a.atr)}))}`;
- else if(page==="Company Intelligence")html+=card("Company Profile",`<div id="companyBox">Loading company profile…</div>`);
+ else if(page==="Company Intelligence")html+=`<div id="companyBox"><div class="callout">Loading full Company Intelligence…</div></div>`;
  else if(page==="Fundamentals")html+=card("Fundamental Snapshot",`<div id="fundBox">Loading fundamentals…</div>`);
  else if(page==="Technical")html+=card("Technical Engine",rows({"Trend":a.trend||"—","RSI":a.rsi?.toFixed?.(1)||"—","MACD":a.macd?.toFixed?.(2)||"—","ATR":money(a.atr),"Volume ratio":a.volume_ratio?`${a.volume_ratio.toFixed(2)}x`:"—","Pattern":a.pattern?.name||"—","Pattern confidence":a.pattern?.confidence!=null?`${a.pattern.confidence}%`:"—"}));
  else if(page==="Decision")html+=card("Decision Matrix",rows({"Signal":a.signal||"—","Setup quality":a.setup_quality?`${a.setup_quality}/100`:"—","Trend":a.trend||"—","Momentum":a.momentum||"—","Volatility":a.volatility||"—","Pattern":a.pattern?.name||"—"}))+tradeSummary();
@@ -35,7 +165,7 @@ function renderModule(page){const a=state.analysis||{};let html=`<div class="cru
  else if(page==="Settings")html+=card("System",rows({"Frontend":"V26.1","Backend":"FastAPI + yfinance","API":"127.0.0.1:8000","Chart":"Interactive candlestick","Data":"Yahoo Finance","Sentiment":"Rule-based headline classifier"}));
  else html+=tradeSummary();
  $("#content").innerHTML=html;
- if(page==="Company Intelligence")api(`/company/${encodeURIComponent(state.ticker)}`).then(x=>$("#companyBox")&&( $("#companyBox").innerHTML=rows({"Name":x.name||state.ticker,"Sector":x.sector||"—","Industry":x.industry||"—","Market Cap":money(x.marketCap),"Exchange":x.exchange||"—","Country":x.country||"—"}))).catch(e=>$("#companyBox").innerHTML=`<div class="callout warning">${esc(e.message)}</div>`);
+ if(page==="Company Intelligence")api(`/company-intelligence/${encodeURIComponent(state.ticker)}?quarters=10`).then(x=>{const box=$("#companyBox");if(box)box.innerHTML=renderCompanyIntelligence(x)}).catch(e=>{const box=$("#companyBox");if(box)box.innerHTML=`<div class="callout warning"><b>Company Intelligence error</b><br>${esc(e.message)}</div>`});
  if(page==="Fundamentals")api(`/fundamental/${encodeURIComponent(state.ticker)}`).then(x=>$("#fundBox")&&( $("#fundBox").innerHTML=rows({"Market Cap":money(x.marketCap),"Trailing P/E":x.trailingPE??"—","Forward P/E":x.forwardPE??"—","EPS":x.epsTrailingTwelveMonths??"—","Revenue Growth":x.revenueGrowth!=null?`${(x.revenueGrowth*100).toFixed(1)}%`:"—","Profit Margin":x.profitMargins!=null?`${(x.profitMargins*100).toFixed(1)}%`:"—","ROE":x.returnOnEquity!=null?`${(x.returnOnEquity*100).toFixed(1)}%`:"—","Beta":x.beta??"—"}))).catch(e=>$("#fundBox").innerHTML=`<div class="callout warning">${esc(e.message)}</div>`);
  if(page==="Portfolio")api(`/portfolio`).then(x=>$("#portfolioBox")&&($("#portfolioBox").innerHTML=rows({"Status":x.status||"—","Cash":money(x.cash),"Positions":x.positions?.length??0,"Engine":x.engine||"—"}))).catch(e=>$("#portfolioBox").innerHTML=`<div class="callout warning">${esc(e.message)}</div>`);
  if(page==="Watchlist")setTimeout(()=>document.querySelectorAll("[data-symbol]").forEach(b=>b.onclick=()=>load(b.dataset.symbol)),0);
