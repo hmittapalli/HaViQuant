@@ -1,0 +1,1 @@
+"""HaViQuant Company Intelligence package."""
