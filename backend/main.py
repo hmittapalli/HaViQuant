@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-APP_VERSION = "26.1.0"
+APP_VERSION = "26.2.0"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 

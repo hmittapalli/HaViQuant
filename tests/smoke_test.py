@@ -28,7 +28,7 @@ sys.modules['yfinance']=fake
 sys.path.insert(0,'/tmp/havi_v26')
 import backend.main as m
 
-assert m.health()['version']=='26.1.0'
+assert m.health()['version']=='26.2.0'
 a=m.analysis('AAPL','6mo','1d'); assert a['candles'] and a['levels']['target3']>a['price']
 for interval,period in [('1m','7d'),('5m','60d'),('15m','60d'),('1h','60d'),('4h','60d')]:
     x=m.analysis('AAPL',period,interval); assert x['candles'], interval
