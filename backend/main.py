@@ -2,7 +2,7 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import math, os, re, statistics, urllib.parse, urllib.request, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from typing import Any
+from typing import Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -22,6 +22,89 @@ except Exception:
 APP_VERSION = "26.2.0"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+SCAN_UNIVERSE = [
+    "SPCX", "NVDA", "AMD", "AVGO", "TSLA", "META", "MSFT", "AAPL", "AMZN", "GOOGL", "NFLX",
+    "PLTR", "SMCI", "ARM", "MU", "TSM", "MRNA", "PFE", "LLY", "NVO", "UNH",
+    "JPM", "GS", "COIN", "MARA", "RIOT", "HOOD", "SOFI", "RIVN", "LCID", "CCL",
+    "NCLH", "BA", "GE", "XOM", "CVX", "OXY", "URA", "CCJ", "AI", "SNOW",
+    "CRWD", "PANW", "NET", "DDOG", "SHOP", "UBER", "ABNB", "ROKU", "RBLX", "IONQ",
+    "APP", "AFRM", "UPST", "MSTR", "BABA", "PDD", "SE", "MELI", "CELH", "ELF",
+    "DKNG", "PINS", "SNAP", "SQ", "PYPL", "INTC", "QCOM", "ORCL", "NOW", "CRM",
+    "VRTX", "REGN", "BIIB", "GILD", "BMY", "MRK", "ISRG", "TMO", "DHR", "GEHC",
+    "LMT", "RTX", "NOC", "CAT", "DE", "FCX", "NEM", "SLV", "GLD", "TLT",
+    "IWM", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV", "XME",
+]
+
+SECTOR_UNIVERSES = {
+    "AI / Semiconductors": ["NVDA", "AMD", "AVGO", "ARM", "MU", "TSM", "SMCI", "QCOM", "INTC", "ORCL"],
+    "Software / Cloud": ["MSFT", "GOOGL", "META", "SNOW", "CRWD", "PANW", "NET", "DDOG", "NOW", "CRM"],
+    "Biotech / Healthcare": ["MRNA", "PFE", "LLY", "NVO", "UNH", "VRTX", "REGN", "BIIB", "GILD", "BMY", "MRK", "ISRG"],
+    "Space / Defense": ["SPCX", "RKLB", "BA", "LMT", "RTX", "NOC", "GE", "GEHC"],
+    "EV / Mobility": ["TSLA", "RIVN", "LCID", "UBER", "ABNB", "CCL", "NCLH"],
+    "Crypto / Fintech": ["COIN", "MARA", "RIOT", "HOOD", "SOFI", "AFRM", "UPST", "PYPL", "MSTR"],
+    "Energy / Commodities": ["XOM", "CVX", "OXY", "URA", "CCJ", "FCX", "NEM", "SLV", "GLD", "XLE", "XME"],
+    "Consumer / Internet": ["AMZN", "NFLX", "SHOP", "ROKU", "RBLX", "BABA", "PDD", "SE", "MELI", "CELH", "ELF", "DKNG", "PINS", "SNAP"],
+    "Financials": ["JPM", "GS", "XLF", "SQ", "PYPL", "HOOD", "SOFI"],
+    "ETFs / Macro": ["SPY", "QQQ", "IWM", "TLT", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV"],
+}
+
+GEOPOLITICAL_THEMES = [
+    {
+        "name": "Tariffs / Trade Policy",
+        "query": "US tariffs trade policy China imports exports stocks sectors",
+        "fallback_queries": ["tariffs stocks Reuters", "trade policy China tariffs market impact", "US import tariffs sector impact stocks"],
+        "benefits": ["domestic industrials", "steel/materials", "defense supply chain"],
+        "pressures": ["retail importers", "hardware margins", "global autos"],
+        "tickers": ["CAT", "DE", "XME", "FCX", "AAPL", "TSLA", "XLY"],
+    },
+    {
+        "name": "Defense / Global Conflict",
+        "query": "global conflict defense spending NATO missiles drones stocks",
+        "fallback_queries": ["defense spending stocks global conflict", "NATO defense budget stocks", "missile drones defense stocks"],
+        "benefits": ["defense", "aerospace", "cybersecurity"],
+        "pressures": ["airlines", "travel", "risk assets"],
+        "tickers": ["LMT", "RTX", "NOC", "BA", "PANW", "CRWD", "CCL", "NCLH"],
+    },
+    {
+        "name": "Energy Security / Oil",
+        "query": "geopolitics oil sanctions OPEC energy security stocks",
+        "fallback_queries": ["oil sanctions stocks energy security", "OPEC geopolitics oil stocks", "Middle East oil market stocks"],
+        "benefits": ["oil producers", "uranium", "energy infrastructure"],
+        "pressures": ["airlines", "consumer discretionary", "transportation"],
+        "tickers": ["XOM", "CVX", "OXY", "URA", "CCJ", "XLE", "XLY"],
+    },
+    {
+        "name": "Technology Regulation / AI Policy",
+        "query": "AI regulation export controls chips data centers government policy stocks",
+        "fallback_queries": ["AI regulation chip export controls stocks", "semiconductor export controls stocks", "data center policy AI stocks"],
+        "benefits": ["approved AI infrastructure", "cybersecurity", "domestic semiconductors"],
+        "pressures": ["restricted chip exports", "high multiple software"],
+        "tickers": ["NVDA", "AMD", "AVGO", "TSM", "CRWD", "PANW", "NET", "XLK"],
+    },
+    {
+        "name": "Healthcare / FDA Policy",
+        "query": "FDA approval healthcare policy drug pricing biotech stocks",
+        "fallback_queries": ["FDA approval biotech stocks", "drug pricing policy healthcare stocks", "healthcare policy biotech market impact"],
+        "benefits": ["approved drugs", "biotech catalysts", "medical devices"],
+        "pressures": ["drug pricing exposed names", "failed trial stocks"],
+        "tickers": ["MRNA", "LLY", "NVO", "VRTX", "REGN", "XBI", "XLV"],
+    },
+]
+
+CATALYST_KEYWORDS = {
+    "approval": 18, "approved": 18, "fda": 16, "phase 3": 14, "trial": 10,
+    "partnership": 12, "deal": 10, "contract": 12, "order": 10, "backlog": 9,
+    "upgrade": 12, "raises target": 12, "outperform": 9, "beat": 11, "beats": 11,
+    "guidance": 9, "raises guidance": 16, "record": 8, "surge": 8, "launch": 8,
+    "ai": 8, "chip": 8, "data center": 10, "buyback": 9, "activist": 8,
+    "merger": 11, "acquisition": 11, "short squeeze": 12,
+}
+
+NEGATIVE_CATALYST_KEYWORDS = {
+    "downgrade": 12, "miss": 10, "misses": 10, "lawsuit": 9, "investigation": 10,
+    "warning": 9, "cuts guidance": 15, "bankruptcy": 20, "offering": 10,
+}
 
 
 def clean(v: Any):
@@ -56,6 +139,31 @@ def period_for_interval(period, interval):
     return allowed[interval] if interval in {"1m","2m","5m","15m","30m","60m","1h"} else (period or allowed[interval])
 
 
+def quote_fallback_history(ticker):
+    try:
+        fast = yf.Ticker(ticker).fast_info
+        price = float(fast.get("last_price") or fast.get("lastPrice") or fast.get("regular_market_price"))
+        prev = float(fast.get("previous_close") or fast.get("previousClose") or price)
+        volume = int(fast.get("last_volume") or fast.get("lastVolume") or 0)
+    except Exception:
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+    if not math.isfinite(prev) or prev <= 0:
+        prev = price
+    dates = pd.date_range(end=pd.Timestamp.now(tz="UTC"), periods=2, freq="D")
+    return pd.DataFrame(
+        {
+            "Open": [prev, prev],
+            "High": [max(prev, price), max(prev, price)],
+            "Low": [min(prev, price), min(prev, price)],
+            "Close": [prev, price],
+            "Volume": [volume, volume],
+        },
+        index=dates,
+    )
+
+
 def download(ticker, period="6mo", interval="1d"):
     # yfinance has no native 4H interval; fetch 1H and resample below.
     source_interval = "1h" if interval == "4h" else interval
@@ -65,14 +173,34 @@ def download(ticker, period="6mo", interval="1d"):
     except Exception as e:
         raise HTTPException(502, f"Market data provider error: {e}")
     if df is None or df.empty:
-        raise HTTPException(404, f"No market data found for {ticker} ({interval})")
-    if isinstance(df.columns, pd.MultiIndex): df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+        if source_interval != "1d":
+            try:
+                df = yf.download(ticker, period="6mo", interval="1d", progress=False, auto_adjust=False, threads=False)
+                source_interval = "1d"
+            except Exception as e:
+                raise HTTPException(502, f"Market data provider error: {e}")
+        if df is None or df.empty:
+            raise HTTPException(404, f"No market data found for {ticker} ({interval})")
+    if isinstance(df.columns, pd.MultiIndex):
+        levels = [list(map(str, df.columns.get_level_values(i))) for i in range(df.columns.nlevels)]
+        if ticker in levels[-1]:
+            df = df.xs(ticker, axis=1, level=df.columns.nlevels - 1)
+        elif ticker in levels[0]:
+            df = df.xs(ticker, axis=1, level=0)
+        else:
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
     df = df.rename(columns={c:str(c).title().replace("Adj close", "Adj Close") for c in df.columns})
+    df = df.loc[:, ~df.columns.duplicated()]
     needed = ["Open","High","Low","Close","Volume"]
     for c in needed:
         if c not in df.columns: raise HTTPException(502, f"Provider did not return {c}")
     df = df[needed].copy().dropna(subset=["Open","High","Low","Close"])
-    if interval == "4h":
+    if df.empty:
+        fallback = quote_fallback_history(ticker)
+        if fallback is not None:
+            return fallback
+        raise HTTPException(404, f"No usable market data found for {ticker} ({interval})")
+    if interval == "4h" and source_interval != "1d":
         df = df.resample("4h").agg({"Open":"first","High":"max","Low":"min","Close":"last","Volume":"sum"}).dropna(subset=["Open","High","Low","Close"])
     return df
 
@@ -182,6 +310,248 @@ def news(ticker):
     return clean({"ticker":ticker,"items":items,"source":"Yahoo Finance news feed"})
 
 
+def score_catalysts(items):
+    score = 0
+    reasons = []
+    titles = []
+    for item in items[:8]:
+        title = item.get("title") or ""
+        body = f"{title} {item.get('summary') or ''}".lower()
+        titles.append(title)
+        for word, points in CATALYST_KEYWORDS.items():
+            if word in body:
+                score += points
+                reasons.append(word)
+        for word, points in NEGATIVE_CATALYST_KEYWORDS.items():
+            if word in body:
+                score -= points
+                reasons.append(f"risk: {word}")
+    unique = []
+    for reason in reasons:
+        if reason not in unique:
+            unique.append(reason)
+    return score, unique[:6], titles[:3]
+
+
+def infer_policy_detail(item, theme_name):
+    title = item.get("title") or ""
+    text = f"{title} {item.get('summary') or ''}".lower()
+    places = []
+    for label, terms in {
+        "United States": ["u.s.", "us ", "united states", "white house", "washington", "congress", "senate"],
+        "China": ["china", "beijing"],
+        "Europe / EU": ["europe", "european union", " eu ", "brussels"],
+        "Russia": ["russia", "moscow"],
+        "Middle East": ["middle east", "iran", "israel", "gaza", "saudi", "opec"],
+        "India": ["india", "new delhi"],
+        "Global": ["global", "worldwide", "international"],
+    }.items():
+        if any(term in f" {text} " for term in terms):
+            places.append(label)
+    policy = []
+    for label, terms in {
+        "Tariff / trade restriction": ["tariff", "tariffs", "import", "export", "trade"],
+        "Sanctions / ban": ["sanction", "sanctions", "ban", "banned"],
+        "Government spending / contract": ["spending", "contract", "budget", "defense bill"],
+        "Regulation / policy decision": ["regulation", "policy", "rule", "government"],
+        "Central bank / speech": ["fed", "federal reserve", "speech", "rate"],
+        "FDA / healthcare decision": ["fda", "approval", "trial", "drug"],
+    }.items():
+        if any(term in text for term in terms):
+            policy.append(label)
+    published = item.get("published_iso") or item.get("published")
+    end_match = re.search(r"(?:until|through|expires?|ending|ends?)\s+([A-Z][a-z]+\.?\s+\d{1,2},?\s+\d{4}|\d{4})", title + " " + (item.get("summary") or ""))
+    return clean({
+        "headline": title,
+        "theme": theme_name,
+        "place": ", ".join(places) or "Not specified in headline",
+        "policy": ", ".join(policy) or theme_name,
+        "announced_or_reported": published or "Date not provided by feed",
+        "status": "Reported in linked article",
+        "end_date": end_match.group(1) if end_match else "Not stated in the article headline/feed summary",
+        "source": item.get("publisher") or "News source",
+        "url": item.get("url"),
+        "sentiment": item.get("sentiment"),
+    })
+
+
+def scanner_row(ticker):
+    t = norm_ticker(ticker)
+    result = {"ticker": t, "score": 0, "signal": "WATCH", "why": [], "articles": []}
+    try:
+        a = analysis(t, "3mo", "1d")
+        result.update({
+            "price": a.get("price"),
+            "change_pct": a.get("change_pct"),
+            "technical_score": a.get("setup_quality"),
+            "trend": a.get("trend"),
+            "momentum": a.get("momentum"),
+            "signal": a.get("signal"),
+            "volume_ratio": a.get("volume_ratio"),
+        })
+        result["score"] += float(a.get("setup_quality") or 0) * 0.55
+        if a.get("trend") == "Bullish": result["score"] += 8
+        if a.get("momentum") == "Strong": result["score"] += 8
+        if float(a.get("volume_ratio") or 0) >= 1.4: result["score"] += 6
+    except Exception as e:
+        result["why"].append(f"technical data unavailable: {e}")
+
+    headlines = []
+    try:
+        headlines.extend(news(t).get("items", [])[:6])
+    except Exception:
+        pass
+    headlines.extend(rss_search(f"{t} stock catalyst FDA earnings upgrade contract partnership AI", 6))
+    catalyst_score, reasons, titles = score_catalysts(headlines)
+    result["score"] += catalyst_score
+    result["catalyst_score"] = catalyst_score
+    result["catalysts"] = reasons
+    result["articles"] = [
+        {"title": x.get("title"), "publisher": x.get("publisher"), "url": x.get("url"), "sentiment": x.get("sentiment")}
+        for x in headlines[:5] if x.get("title")
+    ]
+    if reasons:
+        result["why"].append("News catalyst language: " + ", ".join(reasons[:4]))
+    if titles:
+        result["why"].append("Fresh headlines are appearing before the move is fully reflected in the setup.")
+    if not result["why"]:
+        result["why"].append("No strong catalyst found; keep on watchlist only.")
+    positive = [x for x in reasons if not x.startswith("risk:")]
+    risks = [x.replace("risk: ", "") for x in reasons if x.startswith("risk:")]
+    trend = result.get("trend") or "Unknown"
+    momentum = result.get("momentum") or "Unknown"
+    signal = result.get("signal") or "WATCH"
+    tech_score = result.get("technical_score")
+    result["upside_thesis"] = (
+        f"{t} is ranked because the scan found {', '.join(positive[:3]) or 'early catalyst'} "
+        f"language while the chart reads {trend.lower()} with {momentum.lower()} momentum. "
+        f"The current system signal is {signal} and the technical score is {round(float(tech_score), 1) if tech_score is not None else 'N/A'}."
+    )
+    result["confirmation"] = [
+        "Follow-through above the prior day high",
+        "Volume expansion above the 20-day average",
+        "Fresh positive headline or analyst/event confirmation",
+    ]
+    result["risk_watch"] = risks[:3] or [
+        "Headline may already be priced in",
+        "Broad market weakness can override the setup",
+        "Wait for price confirmation before entry",
+    ]
+    if signal == "BUY" and momentum == "Strong":
+        result["estimated_bullish_timeframe"] = "1-5 trading days after price and volume confirmation"
+    elif trend == "Bullish":
+        result["estimated_bullish_timeframe"] = "1-3 weeks if the catalyst continues and support holds"
+    elif trend == "Mixed":
+        result["estimated_bullish_timeframe"] = "Watch 2-6 weeks; needs breakout confirmation first"
+    else:
+        result["estimated_bullish_timeframe"] = "No bullish timeframe yet; wait for trend reversal"
+    lead_article = result["articles"][0] if result["articles"] else {}
+    result["next_announcement_watch"] = {
+        "summary": lead_article.get("title") or "Watch the next earnings call, SEC filing, company update, product launch, regulatory update, or analyst revision.",
+        "source": lead_article.get("publisher") or "Market/news feed",
+        "url": lead_article.get("url"),
+    }
+    result["product_progress_watch"] = (
+        "Track product launches, customer contracts, regulatory milestones, production/delivery updates, and management guidance for confirmation."
+    )
+    base_upside = 3 + max(0, (result["score"] - 60) / 8)
+    if signal == "BUY": base_upside += 2
+    if momentum == "Strong": base_upside += 1.5
+    result["estimated_upside_pct"] = round(max(1.5, min(14, base_upside)), 1)
+    price = result.get("price")
+    result["estimated_target_price"] = round(float(price) * (1 + result["estimated_upside_pct"] / 100), 2) if price else None
+    result["score"] = round(max(0, min(100, result["score"])), 1)
+    return clean(result)
+
+
+@app.get("/api/v1/market/trade-scanner")
+def trade_scanner(limit:int=50, universe:Optional[str]=None, sector:Optional[str]=None):
+    selected_sector = urllib.parse.unquote(sector or "").strip()
+    if universe:
+        source_symbols = universe.split(",")
+    elif selected_sector and selected_sector.lower() != "all":
+        source_symbols = SECTOR_UNIVERSES.get(selected_sector, SCAN_UNIVERSE)
+    else:
+        source_symbols = SCAN_UNIVERSE
+    symbols = [x.strip().upper() for x in source_symbols if x.strip()]
+    symbols = [x for x in symbols if re.fullmatch(r"[A-Z0-9.\-]{1,12}", x)][:80]
+    rows = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(scanner_row, s): s for s in symbols}
+        for f in as_completed(futures):
+            try:
+                rows.append(f.result())
+            except Exception as e:
+                rows.append({"ticker": futures[f], "score": 0, "signal": "WATCH", "why": [str(e)], "articles": []})
+    rows.sort(key=lambda x: (x.get("score") or 0, x.get("catalyst_score") or 0), reverse=True)
+    return clean({
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "sector": selected_sector or "All",
+        "sectors": ["All"] + list(SECTOR_UNIVERSES.keys()),
+        "universe_size": len(symbols),
+        "items": rows[:max(1, min(50, int(limit)))],
+        "method": "Ranks symbols by recent catalyst headlines, technical setup, momentum, volume expansion, and positive event language.",
+        "disclaimer": "Research signal only. This does not guarantee that the stock price will rise.",
+    })
+
+
+def geopolitics_theme(theme):
+    articles = rss_search(theme["query"], 8)
+    if not articles:
+        for q in theme.get("fallback_queries", []):
+            articles.extend(rss_search(q, 4))
+            if len(articles) >= 5:
+                break
+    text = " ".join([(x.get("title") or "") + " " + (x.get("summary") or "") for x in articles]).lower()
+    heat = 35
+    for word in ["tariff", "sanction", "ban", "export control", "war", "conflict", "fda", "regulation", "policy", "speech", "government"]:
+        if word in text:
+            heat += 9
+    for word in ["approval", "deal", "spending", "contract", "subsidy", "investment"]:
+        if word in text:
+            heat += 6
+    heat = max(0, min(100, heat))
+    direction = "Benefit" if heat >= 60 else "Watch"
+    details = [infer_policy_detail(x, theme["name"]) for x in articles[:5] if x.get("title")]
+    if details:
+        why = f"{theme['name']} has {len(details)} linked article signal{'s' if len(details) != 1 else ''}. Review place, policy, reported date and end-date status before trading."
+    else:
+        why = f"No verified live article detail was returned for {theme['name'].lower()} in this scan. Keep the theme on watch, but do not treat it as an active catalyst without source confirmation."
+    return clean({
+        "theme": theme["name"],
+        "heat": heat,
+        "direction": direction,
+        "benefiting_sectors": theme["benefits"],
+        "pressured_sectors": theme["pressures"],
+        "stocks_to_watch": theme["tickers"],
+        "why": why,
+        "policy_details": details,
+        "articles": [
+            {"title": x.get("title"), "publisher": x.get("publisher"), "url": x.get("url"), "published_iso": x.get("published_iso"), "sentiment": x.get("sentiment")}
+            for x in articles[:5] if x.get("title")
+        ],
+    })
+
+
+@app.get("/api/v1/market/geopolitics")
+def geopolitical_scanner(limit:int=8):
+    rows = []
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(geopolitics_theme, theme): theme["name"] for theme in GEOPOLITICAL_THEMES}
+        for f in as_completed(futures):
+            try:
+                rows.append(f.result())
+            except Exception as e:
+                rows.append({"theme": futures[f], "heat": 0, "direction": "Unavailable", "why": str(e), "articles": []})
+    rows.sort(key=lambda x: x.get("heat") or 0, reverse=True)
+    return clean({
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "items": rows[:max(1, min(20, int(limit)))],
+        "method": "Scans policy, politician speech, government decisions, tariffs, sanctions, regulation, Fed/global politics and maps them to sectors/stocks.",
+        "disclaimer": "Policy impact is probabilistic. Confirm with price, volume, official releases, and sector ETF behavior.",
+    })
+
+
 def rss_search(query, limit=8):
     url="https://news.google.com/rss/search?q="+urllib.parse.quote(query)+"&hl=en-US&gl=US&ceid=US:en"; req=urllib.request.Request(url,headers={"User-Agent":"HaViQuant/26"})
     try:
@@ -208,13 +578,31 @@ def fundamentals(ticker):
     except Exception as e: return {"ticker":ticker,"error":str(e)}
 
 
+def insiders(ticker):
+    t = norm_ticker(ticker)
+    out = {"ticker": t, "items": [], "holders": [], "source": "Yahoo Finance insider/holder data"}
+    try:
+        obj = yf.Ticker(t)
+        tx = getattr(obj, "insider_transactions", None)
+        if tx is not None and not tx.empty:
+            for _, row in tx.head(12).iterrows():
+                data = {str(k): clean(v) for k, v in row.items()}
+                out["items"].append(data)
+        holders = getattr(obj, "major_holders", None)
+        if holders is not None and not holders.empty:
+            out["holders"] = clean(holders.reset_index().to_dict("records")[:8])
+    except Exception as e:
+        out["error"] = str(e)
+    return clean(out)
+
+
 @app.get("/api/v1/meta")
 def api_metadata():
     return clean({
         "app":"HaViQuant",
         "version":APP_VERSION,
         "supported_intraday":["1m","5m","15m","1h","4h"],
-        "supported_navigation":["Stock Analysis","Dashboard","Company Intelligence","Fundamentals","Technical","Decision","Evidence Research","Portfolio","Risk","Backtesting","News","Watchlist","Alerts","Calendar","Settings"]
+        "supported_navigation":["Stock Analysis","Dashboard","Company Intelligence","Fundamentals","Technical","Decision","Trade Scanner","Evidence Research","Portfolio","Risk","Backtesting","News","Watchlist","Alerts","Calendar","Settings"]
     })
 
 @app.get("/api/v1/health")
@@ -236,6 +624,9 @@ def market_news(ticker:str=Query(...)): return news(norm_ticker(ticker))
 @app.get("/api/v1/market/macro")
 def macro(ticker:str=Query(...)):
     t=norm_ticker(ticker); return clean({"ticker":t,"geopolitical":rss_search(f"{t} geopolitics tariffs sanctions trade war international policy",6),"politics":rss_search(f"{t} politician speech policy regulation government",6),"macro":rss_search(f"{t} Federal Reserve rates inflation jobs economy",6),"note":"Headline/context signals only; they do not deterministically predict price."})
+
+@app.get("/api/v1/market/insiders")
+def market_insiders(ticker:str=Query(...)): return insiders(norm_ticker(ticker))
 
 @app.get("/api/v1/market/360")
 def full360(ticker:str=Query(...)):
