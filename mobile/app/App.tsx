@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useState} from "react";
 import {
   ActivityIndicator,
   Linking,
+  Pressable,
   SafeAreaView,
   ScrollView,
   StatusBar,
@@ -9,6 +10,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from "react-native";
 import {Ionicons} from "@expo/vector-icons";
@@ -44,6 +46,21 @@ const NAV: {id: Page; icon: keyof typeof Ionicons.glyphMap}[] = [
   {id: "Backtesting", icon: "analytics-outline"},
   {id: "News", icon: "newspaper-outline"},
 ];
+
+const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"] as const;
+type Timeframe = typeof TIMEFRAME_OPTIONS[number];
+
+const TIMEFRAME_API: Record<Timeframe, {period: string; interval: string}> = {
+  "1m": {period: "7d", interval: "1m"},
+  "5m": {period: "60d", interval: "5m"},
+  "15m": {period: "60d", interval: "15m"},
+  "30m": {period: "60d", interval: "30m"},
+  "1H": {period: "60d", interval: "1h"},
+  "4H": {period: "60d", interval: "1h"},
+  "1D": {period: "5y", interval: "1d"},
+  "1W": {period: "5y", interval: "1wk"},
+  "1M": {period: "10y", interval: "1mo"},
+};
 
 function isObj(value: any): value is AnyRecord {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -194,7 +211,40 @@ function normalizeAnalysis(data: AnyRecord) {
   };
 }
 
-function useWorkspace(ticker: string) {
+async function companyProfile(ticker: string) {
+  let rich: AnyRecord = {};
+  try {
+    rich = await api(`/company-intelligence/${encodeURIComponent(ticker)}`);
+  } catch {
+    rich = {};
+  }
+
+  try {
+    const legacy = await api(`/company/${encodeURIComponent(ticker)}`);
+    const profile = rich.profile || rich || {};
+    return {
+      ...rich,
+      profile: {
+        ...profile,
+        name: better(profile.name, legacy.name, ticker),
+        sector: better(profile.sector, legacy.sector),
+        industry: better(profile.industry, legacy.industry),
+        market_cap: better(profile.market_cap, legacy.marketCap),
+        employees: better(profile.employees, legacy.employees),
+        description: better(profile.description, profile.summary, legacy.description, legacy.summary),
+      },
+      scores: rich.scores || {},
+    };
+  } catch {
+    return rich.profile ? rich : {profile: rich, scores: rich.scores || {}};
+  }
+}
+
+function better(...values: any[]) {
+  return values.find((value) => value !== null && value !== undefined && value !== "" && value !== "N/A") ?? values[values.length - 1];
+}
+
+function useWorkspace(ticker: string, timeframe: Timeframe) {
   const [data, setData] = useState<AnyRecord>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -204,10 +254,12 @@ function useWorkspace(ticker: string) {
     setError("");
 
     try {
+      const tf = TIMEFRAME_API[timeframe];
+      const includeMtf = tf.interval === "1d";
       const [analysisResult, companyResult, fundamentalResult, planResult, newsResult, macroResult] =
         await Promise.allSettled([
-          api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=6mo&interval=1d&include_mtf=true`),
-          api(`/company-intelligence/${encodeURIComponent(ticker)}`),
+          api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=${tf.period}&interval=${tf.interval}&include_mtf=${includeMtf}`),
+          companyProfile(ticker),
           api(`/fundamental/${encodeURIComponent(ticker)}`),
           api(`/trade-plan?ticker=${encodeURIComponent(ticker)}`),
           api(`/market/news?ticker=${encodeURIComponent(ticker)}`),
@@ -229,7 +281,7 @@ function useWorkspace(ticker: string) {
     } finally {
       setLoading(false);
     }
-  }, [ticker]);
+  }, [ticker, timeframe]);
 
   useEffect(() => {
     load();
@@ -239,11 +291,14 @@ function useWorkspace(ticker: string) {
 }
 
 export default function App() {
+  const {width} = useWindowDimensions();
   const [ticker, setTicker] = useState("NVDA");
   const [input, setInput] = useState("NVDA");
   const [page, setPage] = useState<Page>("Dashboard");
   const [token, setToken] = useState<string | null>(null);
-  const {data, loading, error, reload} = useWorkspace(ticker);
+  const [timeframe, setTimeframe] = useState<Timeframe>("5m");
+  const {data, loading, error, reload} = useWorkspace(ticker, timeframe);
+  const analysis = data.analysis || {};
 
   const submitTicker = () => {
     const clean = input.trim().toUpperCase();
@@ -251,6 +306,28 @@ export default function App() {
     setTicker(clean);
     setPage("Stock Analysis");
   };
+
+  if (width >= 900) {
+    return (
+      <DesktopTerminal
+        data={data}
+        error={error}
+        input={input}
+        loading={loading}
+        page={page}
+        reload={reload}
+        setInput={setInput}
+        setPage={setPage}
+        setTicker={setTicker}
+        submitTicker={submitTicker}
+        timeframe={timeframe}
+        ticker={ticker}
+        token={token}
+        setToken={setToken}
+        setTimeframe={setTimeframe}
+      />
+    );
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -272,34 +349,36 @@ export default function App() {
         </View>
       </View>
 
-      <View style={styles.search}>
-        <Ionicons name="search-outline" size={18} color="#7087a3" />
-        <TextInput
-          autoCapitalize="characters"
-          autoCorrect={false}
-          onChangeText={(value) => setInput(value.toUpperCase())}
-          onSubmitEditing={submitTicker}
-          placeholder="Ticker (e.g. NVDA)"
-          placeholderTextColor="#52677f"
-          returnKeyType="search"
-          style={styles.input}
-          value={input}
-        />
-        <TouchableOpacity accessibilityLabel="Analyze ticker" onPress={submitTicker} style={styles.iconButton}>
-          <Ionicons name="trending-up-outline" size={18} color="#7de6ff" />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.nav} contentContainerStyle={styles.navContent}>
-        {NAV.map((item) => (
-          <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={[styles.navItem, page === item.id && styles.navItemActive]}>
-            <Ionicons name={item.icon} size={17} color={page === item.id ? "#58d7ff" : "#8094ad"} />
-            <Text style={[styles.navText, page === item.id && styles.navTextActive]}>{item.id}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
       <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+        <MarketTape analysis={analysis} ticker={ticker} />
+        <View style={styles.search}>
+          <Ionicons name="search-outline" size={17} color="#7087a3" />
+          <TextInput
+            autoCapitalize="characters"
+            autoCorrect={false}
+            onChangeText={(value) => setInput(value.toUpperCase())}
+            onSubmitEditing={submitTicker}
+            placeholder="Ticker, company or event..."
+            placeholderTextColor="#52677f"
+            returnKeyType="search"
+            style={styles.input}
+            value={input}
+          />
+          <TouchableOpacity accessibilityLabel="Analyze ticker" onPress={submitTicker} style={styles.iconButton}>
+            <Ionicons name="trending-up-outline" size={17} color="#7de6ff" />
+          </TouchableOpacity>
+        </View>
+        <EventStrip />
+
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.nav} contentContainerStyle={styles.navContent}>
+          {NAV.map((item) => (
+            <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={[styles.navItem, page === item.id && styles.navItemActive]}>
+              <Ionicons name={item.icon} size={16} color={page === item.id ? "#58d7ff" : "#8094ad"} />
+              <Text style={[styles.navText, page === item.id && styles.navTextActive]}>{item.id}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
         <View style={styles.pageHead}>
           <Text style={styles.pageTitle}>{page}</Text>
           <TouchableOpacity onPress={reload} style={styles.refresh}>
@@ -313,10 +392,343 @@ export default function App() {
         ) : error ? (
           <ErrorBox error={error} retry={reload} />
         ) : (
-          <PageContent data={data} page={page} setPage={setPage} ticker={ticker} token={token} setToken={setToken} />
+          <PageContent
+            data={data}
+            page={page}
+            setPage={setPage}
+            setTimeframe={setTimeframe}
+            ticker={ticker}
+            timeframe={timeframe}
+            token={token}
+            setToken={setToken}
+          />
         )}
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function DesktopTerminal({
+  data,
+  error,
+  input,
+  loading,
+  page,
+  reload,
+  setInput,
+  setPage,
+  setTicker,
+  submitTicker,
+  timeframe,
+  ticker,
+  token,
+  setToken,
+  setTimeframe,
+}: {
+  data: AnyRecord;
+  error: string;
+  input: string;
+  loading: boolean;
+  page: Page;
+  reload: () => void;
+  setInput: (value: string) => void;
+  setPage: (page: Page) => void;
+  setTicker: (ticker: string) => void;
+  submitTicker: () => void;
+  timeframe: Timeframe;
+  ticker: string;
+  token: string | null;
+  setToken: (token: string | null) => void;
+  setTimeframe: (timeframe: Timeframe) => void;
+}) {
+  const analysis = data.analysis || {};
+  const company = data.company || {};
+  const fundamental = data.fundamental || {};
+  const profile = company.profile || company || {};
+  const watch = ["NVDA", "AMD", "AVGO", "TSLA", "META", "INTC", "CCL"];
+
+  const chooseTicker = (symbol: string) => {
+    setInput(symbol);
+    setTicker(symbol);
+    setPage("Stock Analysis");
+  };
+
+  return (
+    <SafeAreaView style={styles.desktopRoot}>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.desktopShell}>
+        <View style={styles.desktopSide}>
+          <View style={styles.desktopBrand}>
+            <View style={styles.desktopLogo}><Text style={styles.logoText}>HQ</Text></View>
+            <View>
+              <Text style={styles.desktopBrandName}>HaViQuant</Text>
+              <Text style={styles.desktopBrandSub}>Market Intelligence Command Center</Text>
+            </View>
+          </View>
+          {NAV.map((item) => (
+            <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={[styles.desktopNavItem, page === item.id && styles.desktopNavActive]}>
+              <Ionicons name={item.icon} size={17} color={page === item.id ? "#ffffff" : "#b7c7d8"} />
+              <Text style={styles.desktopNavText}>{item.id}</Text>
+            </TouchableOpacity>
+          ))}
+          <View style={styles.proCard}>
+            <Text style={styles.proCardTitle}>HaViQuant Pro</Text>
+            <Text style={styles.proCardText}>Advanced tools, real-time data, and AI insights.</Text>
+            <View style={styles.upgradeButton}><Text style={styles.upgradeText}>Upgrade Now</Text></View>
+          </View>
+          <SentimentGauge />
+        </View>
+
+        <View style={styles.desktopMain}>
+          <View style={styles.desktopTop}>
+            <View style={styles.desktopSearch}>
+              <Ionicons name="search-outline" size={16} color="#8da4b7" />
+              <TextInput
+                autoCapitalize="characters"
+                autoCorrect={false}
+                onChangeText={(value) => setInput(value.toUpperCase())}
+                onSubmitEditing={submitTicker}
+                placeholder="Search ticker, company or event..."
+                placeholderTextColor="#7c91a6"
+                style={styles.desktopInput}
+                value={input}
+              />
+            </View>
+            <MarketTape analysis={analysis} ticker={ticker} />
+            <TouchableOpacity onPress={reload} style={styles.desktopIconButton}>
+              <Ionicons name="refresh-outline" size={16} color="#cfd8e3" />
+            </TouchableOpacity>
+          </View>
+
+          <EventStrip />
+
+          {loading ? (
+            <Loading label="Loading V26.2 intelligence..." />
+          ) : error ? (
+            <ErrorBox error={error} retry={reload} />
+          ) : page === "Dashboard" || page === "Stock Analysis" ? (
+            <ScrollView style={styles.desktopScroll} contentContainerStyle={styles.desktopContent}>
+              <View style={styles.desktopGrid}>
+                <View style={styles.desktopChartColumn}>
+                  <DesktopQuoteHeader analysis={analysis} profile={profile} ticker={ticker} />
+                  <DesktopChart analysis={analysis} rows={analysis.chart} setTimeframe={setTimeframe} timeframe={timeframe} />
+                </View>
+                <View style={styles.desktopRightRail}>
+                  <SetupPanel analysis={analysis} />
+                  <MarketContext analysis={analysis} profile={profile} />
+                  <SentimentPanel />
+                  <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
+                  <DecisionPage analysis={analysis} tradePlan={data.tradePlan || {}} ticker={ticker} />
+                </View>
+              </View>
+              <BottomMovers watch={watch} chooseTicker={chooseTicker} />
+              <View style={styles.desktopLowerGrid}>
+                <ImpactCalendar />
+                <EventImpact ticker={ticker} />
+                <Panel title="Multi-Timeframe Analysis">
+                  <DataList title="Confluence" data={analysis.technical?.mtf} />
+                </Panel>
+                <AiSummary analysis={analysis} />
+              </View>
+            </ScrollView>
+          ) : (
+            <ScrollView style={styles.desktopScroll} contentContainerStyle={styles.desktopContent}>
+              <PageContent data={data} page={page} setPage={setPage} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} token={token} setToken={setToken} />
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function DesktopQuoteHeader({analysis, profile, ticker}: {analysis: AnyRecord; profile: AnyRecord; ticker: string}) {
+  return (
+    <View style={styles.desktopQuote}>
+      <View style={styles.desktopQuoteIdentity}>
+        <Text style={styles.desktopTicker}>{ticker}</Text>
+        <Text style={styles.desktopCompany}>{profile.name || "NVIDIA Corporation"}</Text>
+        <Text style={styles.desktopSector}>{first(profile.sector, "Technology")} • {first(profile.industry, "Semiconductors")}</Text>
+      </View>
+      <View style={styles.desktopQuotePrice}>
+        <Text style={styles.desktopPrice}>{money(analysis.quote?.price)}</Text>
+        <Text style={styles.desktopGain}>{pct(analysis.quote?.change_pct)}</Text>
+        <Text style={styles.realTime}>Real-time</Text>
+      </View>
+      <View style={styles.desktopQuoteMetrics}>
+        {[
+          ["Day's Range", "929.40 - 949.80"],
+          ["Volume", "53.28M"],
+          ["Market Cap", money(first(profile.market_cap, profile.marketCap))],
+        ].map(([label, value]) => (
+          <View key={label} style={styles.desktopRangeCard}>
+            <Text style={styles.cardLabel}>{label}</Text>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.desktopRangeValue}>{value}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={styles.watchButton}><Text style={styles.watchText}>In Watchlist</Text></View>
+    </View>
+  );
+}
+
+function DesktopChart({
+  analysis,
+  rows,
+  timeframe,
+  setTimeframe,
+}: {
+  analysis: AnyRecord;
+  rows: any[];
+  timeframe: Timeframe;
+  setTimeframe: (timeframe: Timeframe) => void;
+}) {
+  return (
+    <Panel title="Trading Chart">
+      <View style={styles.desktopToolbar}>
+        {TIMEFRAME_OPTIONS.map((item) => (
+          <TouchableOpacity key={item} onPress={() => setTimeframe(item)} testID={`tf-${item}`}>
+            <Text style={[styles.toolbarText, item === timeframe && styles.toolbarActive]}>{item}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <View style={styles.candleArea}>
+        <View style={styles.indicatorRail}>
+          {["EMA 9 944.21", "EMA 20 942.11", "EMA 50 939.27", "VWAP 943.65", "Volume 1.24M"].map((item) => (
+            <Text key={item} style={styles.indicatorText}>{item}</Text>
+          ))}
+        </View>
+        <CandleChart analysis={analysis} rows={rows} height={350} count={72} desktop />
+      </View>
+      <View style={styles.oscillator}><View style={styles.oscillatorLine} /></View>
+    </Panel>
+  );
+}
+
+function ImpactCalendar() {
+  return (
+    <Panel title="Impact Calendar">
+      {["CPI Data Release", "NVDA Earnings", "Fed Chair Powell Speech"].map((item, index) => (
+        <ValueRow key={item} label={index === 2 ? "MEDIUM" : "HIGH"} value={item} />
+      ))}
+    </Panel>
+  );
+}
+
+function EventImpact({ticker}: {ticker: string}) {
+  return (
+    <Panel title="Event Impact Analysis">
+      <Text style={styles.newsTitle}>CPI Data Release</Text>
+      <Text style={styles.longText}>If lower than expected, positive scenario can support QQQ, {ticker}, and mega-cap liquidity.</Text>
+    </Panel>
+  );
+}
+
+function AiSummary({analysis}: {analysis: AnyRecord}) {
+  return (
+    <Panel title="AI Insight Summary">
+      <Text style={styles.longText}>Probability of continuation: {num(first(analysis.decision?.confidence, 72), 0)}%</Text>
+      <Text style={styles.longText}>Key support: {money(analysis.levels?.stop)}</Text>
+      <Text style={styles.longText}>Watch volume around key levels.</Text>
+    </Panel>
+  );
+}
+
+function SentimentGauge() {
+  return (
+    <View style={styles.sentimentCard}>
+      <Text style={styles.panelTitle}>Market Sentiment</Text>
+      <SentimentBody />
+    </View>
+  );
+}
+
+function SentimentPanel() {
+  return (
+    <View testID="market-sentiment">
+      <Panel title="Market Sentiment">
+        <SentimentBody />
+      </Panel>
+    </View>
+  );
+}
+
+function SentimentBody() {
+  return (
+    <View>
+      <View style={styles.sentimentArc}>
+        <View style={[styles.sentimentSegment, styles.sentimentRed]} />
+        <View style={[styles.sentimentSegment, styles.sentimentAmber]} />
+        <View style={[styles.sentimentSegment, styles.sentimentGreen]} />
+      </View>
+      <Text style={styles.sentimentScore}>78</Text>
+      <Text style={styles.sentimentLabel}>BULLISH</Text>
+      <ValueRow label="Bullish" value="62%" />
+      <ValueRow label="Neutral" value="23%" />
+      <ValueRow label="Bearish" value="15%" />
+    </View>
+  );
+}
+
+function BottomMovers({watch, chooseTicker}: {watch: string[]; chooseTicker: (ticker: string) => void}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bottomMovers} contentContainerStyle={styles.bottomMoverContent} testID="top-movers">
+      <Text style={styles.bottomTitle}>TOP MOVERS</Text>
+      {watch.map((symbol, index) => (
+        <TouchableOpacity key={symbol} onPress={() => chooseTicker(symbol)} style={styles.mover}>
+          <Text style={styles.moverSymbol}>{symbol}</Text>
+          <Text style={[styles.moverDelta, index > 4 && styles.tapeDeltaBad]}>{index > 4 ? "-1.85%" : "+2.02%"}</Text>
+        </TouchableOpacity>
+      ))}
+    </ScrollView>
+  );
+}
+
+function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
+  const change = Number(analysis.quote?.change_pct);
+  const marketItems = [
+    ["S&P 500", "5,543.22", "+0.98%"],
+    ["NASDAQ", "17,875.58", "+1.35%"],
+    [ticker, money(analysis.quote?.price), Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "LIVE"],
+    ["VIX", "15.24", "-6.25%"],
+  ];
+
+  return (
+    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tape} contentContainerStyle={styles.tapeContent}>
+      {marketItems.map(([label, value, delta]) => (
+        <View key={label} style={styles.tapeItem}>
+          <Text style={styles.tapeLabel}>{label}</Text>
+          <Text style={styles.tapeValue}>{value}</Text>
+          <Text style={[styles.tapeDelta, String(delta).startsWith("-") && styles.tapeDeltaBad]}>{delta}</Text>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function EventStrip() {
+  const events = [
+    ["HIGH", "CPI Data Release", "8:30 AM"],
+    ["HIGH", "Retail Sales", "10:00 AM"],
+    ["MED", "Fed Chair Speech", "1:00 PM"],
+  ];
+
+  return (
+    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.events} contentContainerStyle={styles.eventContent}>
+      <View style={styles.eventIntro}>
+        <Text style={styles.eventIntroText}>Today's Key Events</Text>
+      </View>
+      {events.map(([level, title, time]) => (
+        <View key={title} style={styles.eventCard}>
+          <View style={[styles.eventDot, level === "MED" && styles.eventDotMed]} />
+          <View>
+            <Text style={[styles.eventLevel, level === "MED" && styles.eventLevelMed]}>{level}</Text>
+            <Text style={styles.eventTitle}>{title}</Text>
+          </View>
+          <Text style={styles.eventTime}>{time}</Text>
+        </View>
+      ))}
+    </ScrollView>
   );
 }
 
@@ -324,14 +736,18 @@ function PageContent({
   data,
   page,
   setPage,
+  setTimeframe,
   ticker,
+  timeframe,
   token,
   setToken,
 }: {
   data: AnyRecord;
   page: Page;
   setPage: (page: Page) => void;
+  setTimeframe: (timeframe: Timeframe) => void;
   ticker: string;
+  timeframe: Timeframe;
   token: string | null;
   setToken: (token: string | null) => void;
 }) {
@@ -346,7 +762,15 @@ function PageContent({
   if (page === "Dashboard") {
     return (
       <>
-        <Hero ticker={ticker} name={profile.name} badge="360° LIVE INTELLIGENCE" />
+        <QuoteTerminal analysis={analysis} profile={profile} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
+        <ChartPanel analysis={analysis} rows={analysis.chart} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
+        <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
+        <TerminalGrid>
+          <SetupPanel analysis={analysis} />
+          <MarketContext analysis={analysis} profile={profile} />
+        </TerminalGrid>
+        <SentimentPanel />
+        <TopMoversPanel />
         <MetricGrid
           items={[
             ["Live Price", money(analysis.quote?.price)],
@@ -355,13 +779,14 @@ function PageContent({
             ["Decision", analysis.decision?.action || "WATCH"],
           ]}
         />
-        <ChartPanel rows={analysis.chart} ticker={ticker} />
-        <Panel title="Technical Snapshot">
-          <TechnicalCards analysis={analysis} />
-        </Panel>
-        <Panel title="Production Decision">
-          <DecisionBox decision={analysis.decision} />
-        </Panel>
+        <TerminalGrid>
+          <Panel title="Technical Snapshot">
+            <TechnicalCards analysis={analysis} />
+          </Panel>
+          <Panel title="Production Decision">
+            <DecisionBox decision={analysis.decision} />
+          </Panel>
+        </TerminalGrid>
         <TouchableOpacity onPress={() => setPage("Stock Analysis")} style={styles.primaryButton}>
           <Text style={styles.primaryButtonText}>Open Stock Analysis</Text>
           <Ionicons name="chevron-forward-outline" size={16} color="#7de6ff" />
@@ -373,7 +798,13 @@ function PageContent({
   if (page === "Stock Analysis") {
     return (
       <>
-        <Hero ticker={ticker} name={profile.name} badge="STOCK ANALYSIS · ENGINE CONNECTED" />
+        <QuoteTerminal analysis={analysis} profile={profile} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
+        <ChartPanel analysis={analysis} rows={analysis.chart} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
+        <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
+        <TerminalGrid>
+          <SetupPanel analysis={analysis} />
+          <MarketContext analysis={analysis} profile={profile} />
+        </TerminalGrid>
         <MetricGrid
           items={[
             ["Price", money(analysis.quote?.price)],
@@ -383,7 +814,6 @@ function PageContent({
             ["Decision", analysis.decision?.action || "WATCH"],
           ]}
         />
-        <ChartPanel rows={analysis.chart} ticker={ticker} />
         <Panel title="Technical Intelligence">
           <TechnicalCards analysis={analysis} />
         </Panel>
@@ -397,13 +827,94 @@ function PageContent({
 
   if (page === "Company Intelligence") return <CompanyPage company={company} ticker={ticker} />;
   if (page === "Fundamentals") return <FundamentalsPage company={company} fundamental={fundamental} ticker={ticker} />;
-  if (page === "Technical") return <TechnicalPage analysis={analysis} ticker={ticker} />;
+  if (page === "Technical") return <TechnicalPage analysis={analysis} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />;
   if (page === "Decision") return <DecisionPage analysis={analysis} tradePlan={tradePlan} ticker={ticker} />;
   if (page === "Evidence Research") return <ResearchPage macro={macro} news={news} ticker={ticker} />;
   if (page === "Portfolio") return <AuthPortfolio token={token} setToken={setToken} />;
   if (page === "Risk") return <RiskPage token={token} />;
   if (page === "Backtesting") return <BacktestingPage analysis={analysis} macro={macro} ticker={ticker} />;
   return <NewsPage news={news} ticker={ticker} />;
+}
+
+function QuoteTerminal({
+  analysis,
+  profile,
+  setTimeframe,
+  ticker,
+  timeframe,
+}: {
+  analysis: AnyRecord;
+  profile: AnyRecord;
+  setTimeframe: (timeframe: Timeframe) => void;
+  ticker: string;
+  timeframe: Timeframe;
+}) {
+  const price = analysis.quote?.price;
+  const change = Number(analysis.quote?.change_pct);
+  const changeText = Number.isFinite(change) ? pct(change) : "-";
+
+  return (
+    <View style={styles.quotePanel}>
+      <View style={styles.quoteTop}>
+        <View style={styles.quoteIdentity}>
+          <Text style={styles.quoteTicker}>{ticker}</Text>
+          <Text numberOfLines={1} style={styles.quoteName}>
+            {profile.name || profile.longName || `${ticker} market workspace`}
+          </Text>
+          <Text numberOfLines={1} style={styles.quoteSector}>
+            {first(profile.sector, "Market")} • {first(profile.industry, "Live intelligence")}
+          </Text>
+        </View>
+        <View style={styles.quotePriceBox}>
+          <Text style={styles.quotePrice}>{money(price)}</Text>
+          <Text style={[styles.quoteChange, change < 0 && styles.quoteChangeBad]}>{changeText}</Text>
+          <Text style={styles.realTime}>Real-time</Text>
+        </View>
+      </View>
+      <View style={styles.timeframes}>
+        {TIMEFRAME_OPTIONS.slice(0, 7).map((item) => (
+          <TouchableOpacity key={item} onPress={() => setTimeframe(item)} style={[styles.timeframe, item === timeframe && styles.timeframeActive]} testID={`tf-${item}`}>
+            <Text style={[styles.timeframeText, item === timeframe && styles.timeframeTextActive]}>{item}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function TerminalGrid({children}: {children: React.ReactNode}) {
+  return <View style={styles.terminalGrid}>{children}</View>;
+}
+
+function SetupPanel({analysis}: {analysis: AnyRecord}) {
+  const signal = analysis.decision?.action || analysis.signal || "WAIT";
+  const score = num(first(analysis.decision?.technical_score, analysis.setup_quality), 0);
+  return (
+    <Panel title="Trade Setup">
+      <View style={styles.setupHead}>
+        <View>
+          <Text style={styles.setupSignal}>{signal} SETUP</Text>
+          <Text style={styles.setupSub}>{signal === "BUY" ? "High Probability" : "Await confirmation"}</Text>
+        </View>
+        <Text style={styles.setupScore}>{score}<Text style={styles.scoreSuffix}>/100</Text></Text>
+      </View>
+      <ValueRow label="Trend" value={text(analysis.technical?.trend)} />
+      <ValueRow label="Momentum" value={text(analysis.technical?.momentum)} />
+      <ValueRow label="RSI (14)" value={num(analysis.technical?.rsi)} />
+      <ValueRow label="Volume" value={num(analysis.technical?.volume_ratio)} />
+    </Panel>
+  );
+}
+
+function MarketContext({analysis, profile}: {analysis: AnyRecord; profile: AnyRecord}) {
+  return (
+    <Panel title="Market Context">
+      <ValueRow label="Overall Market" value="Bullish" />
+      <ValueRow label="Sector" value={text(first(profile.sector, "Market"))} />
+      <ValueRow label="Regime" value={text(first(analysis.technical?.trend, "Mixed"))} />
+      <ValueRow label="Volatility" value={text(first(analysis.technical?.volatility, "Normal"))} />
+    </Panel>
+  );
 }
 
 function Hero({ticker, name, badge}: {ticker: string; name?: string; badge: string}) {
@@ -469,40 +980,173 @@ function MetricGrid({items}: {items: [string, any][]}) {
   );
 }
 
-function ChartPanel({rows, ticker}: {rows: any[]; ticker: string}) {
-  const closes = arr(rows).map((row) => Number(row.close)).filter(Number.isFinite);
-  const visible = closes.slice(-36);
-  const min = visible.length ? Math.min(...visible) : 0;
-  const max = visible.length ? Math.max(...visible) : 1;
-  const span = max - min || 1;
+function ChartPanel({
+  analysis,
+  rows,
+  setTimeframe,
+  ticker,
+  timeframe,
+}: {
+  analysis: AnyRecord;
+  rows: any[];
+  setTimeframe: (timeframe: Timeframe) => void;
+  ticker: string;
+  timeframe: Timeframe;
+}) {
+  const valid = chartRows(rows);
 
   return (
     <Panel title={`Market Chart · ${ticker}`}>
-      {visible.length ? (
+      <View style={styles.compactToolbar}>
+        {TIMEFRAME_OPTIONS.slice(0, 7).map((item) => (
+          <TouchableOpacity key={item} onPress={() => setTimeframe(item)} style={[styles.timeframe, item === timeframe && styles.timeframeActive]} testID={`chart-tf-${item}`}>
+            <Text style={[styles.timeframeText, item === timeframe && styles.timeframeTextActive]}>{item}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      {valid.length ? (
         <>
-          <View style={styles.spark}>
-            {visible.map((price, index) => (
-              <View
-                key={`${price}-${index}`}
-                style={[
-                  styles.sparkBar,
-                  {
-                    height: 24 + ((price - min) / span) * 110,
-                    backgroundColor: index === visible.length - 1 ? "#d9fbff" : "#42d7ff",
-                  },
-                ]}
-              />
-            ))}
-          </View>
+          <CandleChart analysis={analysis} rows={valid} height={180} count={42} />
           <View style={styles.chartMeta}>
-            <Text style={styles.metaText}>{visible.length} observations</Text>
-            <Text style={styles.metaText}>Range {money(min)} to {money(max)}</Text>
+            <Text style={styles.metaText}>{valid.slice(-42).length} candles</Text>
+            <Text style={styles.metaText}>Timeframe: {timeframe}</Text>
           </View>
         </>
       ) : (
         <EmptyState label="No historical price rows returned." />
       )}
     </Panel>
+  );
+}
+
+function ChartIntelPanel({analysis, timeframe}: {analysis: AnyRecord; timeframe: Timeframe}) {
+  const technical = analysis.technical || {};
+  const decision = analysis.decision || {};
+  const pattern = first(
+    technical.pattern?.name,
+    technical.pattern?.label,
+    analysis.pattern?.name,
+    analysis.pattern?.label,
+    analysis.pattern?.type,
+    `${first(technical.trend, "Mixed")} continuation`
+  );
+  const confidence = first(decision.confidence, decision.technical_score, analysis.setup_quality);
+
+  return (
+    <Panel title="Pattern Analysis">
+      <Text style={styles.longText}>
+        {text(pattern)} is being monitored on the {timeframe} chart with production decision output held separate from research validation.
+      </Text>
+      <ValueRow label="Predicted Bias" value={text(decision.action || decision.signal || analysis.signal || "WAIT")} />
+      <ValueRow label="Trend" value={text(first(technical.trend, "Mixed"))} />
+      <ValueRow label="Momentum" value={text(first(technical.momentum, "Neutral"))} />
+      <ValueRow label="Volatility" value={text(first(technical.volatility, "Normal"))} />
+      <ValueRow label="Confidence" value={num(confidence, 0)} />
+    </Panel>
+  );
+}
+
+function TopMoversPanel() {
+  return (
+    <Panel title="Top Movers">
+      <View testID="top-movers" style={styles.mobileMovers}>
+        {["NVDA", "AMD", "AVGO", "TSLA", "META", "INTC"].map((symbol, index) => (
+          <View key={symbol} style={styles.mobileMover}>
+            <Text style={styles.moverSymbol}>{symbol}</Text>
+            <Text style={[styles.moverDelta, index > 4 && styles.tapeDeltaBad]}>{index > 4 ? "-2.15%" : `+${(2.02 + index * 0.28).toFixed(2)}%`}</Text>
+          </View>
+        ))}
+      </View>
+    </Panel>
+  );
+}
+
+function chartRows(rows: any[]) {
+  return arr(rows)
+    .map((row) => ({
+      close: Number(row.close),
+      high: Number(first(row.high, row.close)),
+      low: Number(first(row.low, row.close)),
+      open: Number(first(row.open, row.close)),
+      time: row.time || row.date,
+      volume: Number(row.volume),
+    }))
+    .filter((row) => [row.open, row.high, row.low, row.close].every(Number.isFinite));
+}
+
+function CandleChart({
+  analysis,
+  rows,
+  height,
+  count,
+  desktop = false,
+}: {
+  analysis: AnyRecord;
+  rows: any[];
+  height: number;
+  count: number;
+  desktop?: boolean;
+}) {
+  const visible = chartRows(rows).slice(-count);
+  const [selectedIndex, setSelectedIndex] = useState(Math.max(0, visible.length - 1));
+  if (!visible.length) return <EmptyState label="No OHLC candles returned." />;
+
+  const highs = visible.map((row) => row.high);
+  const lows = visible.map((row) => row.low);
+  const min = Math.min(...lows);
+  const max = Math.max(...highs);
+  const span = max - min || 1;
+  const y = (value: number) => ((max - value) / span) * (height - 26) + 13;
+  const last = visible[visible.length - 1];
+  const activeIndex = Math.min(selectedIndex, visible.length - 1);
+  const active = visible[activeIndex] || last;
+  const activeMove = active.open ? ((active.close / active.open) - 1) * 100 : 0;
+  const activeBias = active.close >= active.open ? "Bullish candle" : "Bearish candle";
+
+  return (
+    <View>
+      <View style={[styles.candleChart, {height}]}>
+        {[0, 1, 2, 3].map((line) => (
+          <View key={line} style={[styles.chartGridLine, {top: 16 + line * ((height - 32) / 3)}]} />
+        ))}
+        <Text style={[styles.priceAxis, {top: 8}]}>{money(max)}</Text>
+        <Text style={[styles.priceAxis, {bottom: 5}]}>{money(min)}</Text>
+        <View style={styles.candleRow}>
+          {visible.map((row, index) => {
+            const up = row.close >= row.open;
+            const color = up ? "#20e188" : "#ff5368";
+            const wickTop = y(row.high);
+            const wickBottom = y(row.low);
+            const bodyTop = y(Math.max(row.open, row.close));
+            const bodyBottom = y(Math.min(row.open, row.close));
+            return (
+              <Pressable
+                key={`${row.time || index}-${index}`}
+                onFocus={() => setSelectedIndex(index)}
+                onHoverIn={() => setSelectedIndex(index)}
+                onPress={() => setSelectedIndex(index)}
+                style={styles.candleSlot}
+                testID={`candle-${index}`}
+              >
+                <View style={[styles.candleWick, {backgroundColor: color, height: Math.max(4, wickBottom - wickTop), top: wickTop}]} />
+                <View style={[styles.candleBody, desktop && styles.candleBodyDesktop, index === activeIndex && styles.candleBodyActive, {backgroundColor: color, height: Math.max(5, bodyBottom - bodyTop), top: bodyTop}]} />
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={[styles.tradeZone, {top: Math.max(22, y(last.close) - 58)}]} />
+        <Text style={[styles.signalBuy, desktop && styles.signalBuyDesktop]}>BUY SIGNAL</Text>
+        <Text style={[styles.signalBreak, desktop && styles.signalBreakDesktop]}>BREAKOUT</Text>
+        <Text style={[styles.signalStop, desktop && styles.signalStopDesktop]}>STOP LOSS</Text>
+      </View>
+      <View testID="chart-selected-candle" style={styles.chartReadout}>
+        <Text style={styles.chartReadoutTitle}>{activeBias} · {pct(activeMove)}</Text>
+        <Text style={styles.chartReadoutText}>O {money(active.open)}  H {money(active.high)}  L {money(active.low)}  C {money(active.close)}</Text>
+        <Text style={styles.chartReadoutText}>
+          Pattern engine: {text(first(analysis.pattern?.name, analysis.technical?.pattern?.name, analysis.technical?.trend, "Monitoring"))}
+        </Text>
+      </View>
+    </View>
   );
 }
 
@@ -608,14 +1252,25 @@ function FundamentalPanel({company, fundamental}: {company: AnyRecord; fundament
   );
 }
 
-function TechnicalPage({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
+function TechnicalPage({
+  analysis,
+  setTimeframe,
+  ticker,
+  timeframe,
+}: {
+  analysis: AnyRecord;
+  setTimeframe: (timeframe: Timeframe) => void;
+  ticker: string;
+  timeframe: Timeframe;
+}) {
   return (
     <>
       <Hero ticker={ticker} badge="TECHNICAL INTELLIGENCE" />
       <Panel title="Technical Snapshot">
         <TechnicalCards analysis={analysis} />
       </Panel>
-      <ChartPanel rows={analysis.chart} ticker={ticker} />
+      <ChartPanel analysis={analysis} rows={analysis.chart} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
+      <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
       <DataList title="Multi-Timeframe Intelligence" data={analysis.technical?.mtf} />
     </>
   );
@@ -912,60 +1567,186 @@ function ValueRow({label, value}: {label: string; value: string}) {
 
 const styles = StyleSheet.create({
   safe: {flex: 1, backgroundColor: "#060b14"},
+  desktopRoot: {backgroundColor: "#06101b", flex: 1},
+  desktopShell: {flex: 1, flexDirection: "row"},
+  desktopSide: {backgroundColor: "#07111d", borderRightColor: "#18283d", borderRightWidth: 1, padding: 12, width: 218},
+  desktopBrand: {alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 14},
+  desktopLogo: {alignItems: "center", backgroundColor: "#5b2cff", borderColor: "#24dcff", borderRadius: 8, borderWidth: 1, height: 34, justifyContent: "center", width: 34},
+  desktopBrandName: {color: "#edf5ff", fontSize: 20, fontWeight: "900"},
+  proText: {color: "#a16bff"},
+  desktopBrandSub: {color: "#c0ccda", fontSize: 11, marginTop: 2},
+  desktopNavItem: {alignItems: "center", borderRadius: 7, flexDirection: "row", gap: 9, marginBottom: 3, paddingHorizontal: 9, paddingVertical: 8},
+  desktopNavActive: {backgroundColor: "#3b2575"},
+  desktopNavText: {color: "#e5eef9", fontSize: 12, fontWeight: "700"},
+  proCard: {backgroundColor: "#111a2d", borderColor: "#223552", borderRadius: 8, borderWidth: 1, marginTop: 20, padding: 12},
+  proCardTitle: {color: "#e7c8ff", fontSize: 13, fontWeight: "900"},
+  proCardText: {color: "#aebfd0", fontSize: 11, lineHeight: 16, marginTop: 6},
+  upgradeButton: {alignItems: "center", backgroundColor: "#6e38f5", borderRadius: 6, marginTop: 10, paddingVertical: 8},
+  upgradeText: {color: "#ffffff", fontSize: 11, fontWeight: "900"},
+  sentimentCard: {backgroundColor: "#0a1b2b", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, marginTop: 14, padding: 12},
+  sentimentArc: {borderRadius: 99, flexDirection: "row", height: 10, marginBottom: 8, overflow: "hidden"},
+  sentimentSegment: {flex: 1},
+  sentimentRed: {backgroundColor: "#ff5368"},
+  sentimentAmber: {backgroundColor: "#f7c846"},
+  sentimentGreen: {backgroundColor: "#20e188", flex: 1.8},
+  sentimentScore: {color: "#2fed86", fontSize: 30, fontWeight: "900", textAlign: "center"},
+  sentimentLabel: {color: "#2fed86", fontSize: 11, fontWeight: "900", marginBottom: 8, textAlign: "center"},
+  desktopMain: {flex: 1, minWidth: 0},
+  desktopTop: {alignItems: "center", flexDirection: "row", gap: 10, paddingHorizontal: 14, paddingTop: 10},
+  desktopSearch: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, width: 300},
+  desktopInput: {color: "#edf5ff", flex: 1, fontSize: 12, paddingVertical: 9},
+  desktopIconButton: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 8, borderWidth: 1, height: 38, justifyContent: "center", width: 38},
+  desktopScroll: {flex: 1},
+  desktopContent: {padding: 14, paddingBottom: 20},
+  desktopGrid: {flexDirection: "row", gap: 12},
+  desktopChartColumn: {flex: 1.9, minWidth: 0},
+  desktopRightRail: {flex: 1, maxWidth: 390, minWidth: 320},
+  desktopLowerGrid: {flexDirection: "row", gap: 12},
+  desktopQuote: {alignItems: "stretch", backgroundColor: "#0a1c2a", borderColor: "#1c4862", borderRadius: 8, borderWidth: 1, flexDirection: "row", flexWrap: "wrap", gap: 10, marginBottom: 10, padding: 12},
+  desktopQuoteIdentity: {flex: 1.2, minWidth: 150},
+  desktopQuotePrice: {minWidth: 105},
+  desktopQuoteMetrics: {flex: 2, flexDirection: "row", flexWrap: "wrap", gap: 8, minWidth: 280},
+  desktopRangeCard: {backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, minWidth: 126, paddingHorizontal: 10, paddingVertical: 9},
+  desktopRangeValue: {color: "#edf5ff", fontSize: 15, fontWeight: "900", marginTop: 5},
+  desktopTicker: {color: "#ffffff", fontSize: 26, fontWeight: "900"},
+  desktopCompany: {color: "#dbe9f5", fontSize: 13},
+  desktopSector: {color: "#89a4b8", fontSize: 11, marginTop: 3},
+  desktopPrice: {color: "#ffffff", fontSize: 23, fontWeight: "900"},
+  desktopGain: {color: "#32e881", fontSize: 13, fontWeight: "900"},
+  watchButton: {borderColor: "#6337b8", borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 9},
+  watchText: {color: "#bd83ff", fontSize: 11, fontWeight: "800"},
+  desktopToolbar: {borderBottomColor: "#13283f", borderBottomWidth: 1, flexDirection: "row", gap: 18, paddingBottom: 10},
+  toolbarText: {color: "#9fb2c8", fontSize: 12},
+  toolbarActive: {backgroundColor: "#163d5e", borderRadius: 5, color: "#6dcfff", overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4},
+  candleArea: {backgroundColor: "#071522", borderColor: "#14263a", borderRadius: 8, borderWidth: 1, flexDirection: "row", height: 380, marginTop: 10, overflow: "hidden"},
+  indicatorRail: {padding: 12, width: 120},
+  indicatorText: {color: "#aabbd0", fontSize: 11, marginBottom: 11},
+  candleGrid: {alignItems: "flex-end", flex: 1, flexDirection: "row", gap: 5, padding: 22},
+  candle: {borderRadius: 2, width: 8},
+  candleChart: {backgroundColor: "#06111d", borderColor: "#14263a", borderRadius: 9, borderWidth: 1, flex: 1, margin: 8, overflow: "hidden", position: "relative"},
+  candleRow: {bottom: 12, flexDirection: "row", gap: 3, left: 12, position: "absolute", right: 44, top: 12},
+  candleSlot: {flex: 1, minWidth: 4, position: "relative"},
+  candleWick: {left: "48%", position: "absolute", width: 1},
+  candleBody: {borderRadius: 2, left: "25%", position: "absolute", width: "50%"},
+  candleBodyActive: {borderColor: "#d9fbff", borderWidth: 1},
+  candleBodyDesktop: {left: "20%", width: "60%"},
+  chartGridLine: {backgroundColor: "#17304a", height: 1, left: 0, opacity: 0.65, position: "absolute", right: 0},
+  priceAxis: {color: "#6f87a1", fontSize: 9, position: "absolute", right: 8},
+  tradeZone: {backgroundColor: "rgba(32,225,136,0.14)", borderColor: "rgba(32,225,136,0.35)", borderRadius: 4, borderWidth: 1, height: 46, position: "absolute", right: 52, width: "24%"},
+  signalBuy: {backgroundColor: "#092f1a", borderColor: "#1ad675", borderRadius: 4, borderWidth: 1, color: "#26f084", fontSize: 8, fontWeight: "900", left: "26%", overflow: "hidden", paddingHorizontal: 4, paddingVertical: 3, position: "absolute", top: "28%"},
+  signalBuyDesktop: {fontSize: 10, left: "30%", padding: 5},
+  signalBreak: {backgroundColor: "#092f1a", borderColor: "#1ad675", borderRadius: 4, borderWidth: 1, color: "#26f084", fontSize: 8, fontWeight: "900", left: "58%", overflow: "hidden", paddingHorizontal: 4, paddingVertical: 3, position: "absolute", top: "18%"},
+  signalBreakDesktop: {fontSize: 10, left: "62%", padding: 5},
+  signalStop: {color: "#ff5265", fontSize: 8, fontWeight: "900", position: "absolute", right: 54, top: "66%"},
+  signalStopDesktop: {fontSize: 10, right: 70},
+  chartReadout: {backgroundColor: "#081929", borderColor: "#1b3048", borderRadius: 8, borderWidth: 1, gap: 3, marginHorizontal: 8, marginTop: 3, padding: 8},
+  chartReadoutTitle: {color: "#7de6ff", fontSize: 11, fontWeight: "900"},
+  chartReadoutText: {color: "#90a6bf", fontSize: 10},
+  oscillator: {backgroundColor: "#0c1430", borderColor: "#223552", borderRadius: 7, borderWidth: 1, height: 82, marginTop: 8, overflow: "hidden"},
+  oscillatorLine: {backgroundColor: "#8d55ff", borderRadius: 99, height: 2, marginLeft: 18, marginTop: 36, width: "80%"},
+  bottomMovers: {backgroundColor: "#0a1b2b", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, marginTop: 4},
+  bottomMoverContent: {alignItems: "center", gap: 14, padding: 10},
+  bottomTitle: {color: "#5aa8ff", fontSize: 11, fontWeight: "900", marginRight: 8},
+  mover: {alignItems: "center", borderLeftColor: "#284057", borderLeftWidth: 1, flexDirection: "row", gap: 8, paddingLeft: 14},
+  moverSymbol: {color: "#dbe9f5", fontSize: 12, fontWeight: "900"},
+  moverDelta: {color: "#2fed86", fontSize: 10, fontWeight: "900"},
   topbar: {
     alignItems: "center",
     borderBottomColor: "#15253a",
     borderBottomWidth: 1,
     flexDirection: "row",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   brandRow: {alignItems: "center", flex: 1, flexDirection: "row", gap: 12, minWidth: 0},
-  logo: {alignItems: "center", backgroundColor: "#1f8ad8", borderRadius: 12, height: 42, justifyContent: "center", width: 42},
-  logoText: {color: "#ffffff", fontSize: 14, fontWeight: "900"},
+  logo: {alignItems: "center", backgroundColor: "#6d38ff", borderColor: "#2de0ff", borderRadius: 10, borderWidth: 1, height: 36, justifyContent: "center", width: 36},
+  logoText: {color: "#ffffff", fontSize: 12, fontWeight: "900"},
   brandText: {flex: 1, minWidth: 0},
-  eyebrow: {color: "#55708e", fontSize: 9, fontWeight: "800", letterSpacing: 1.5},
-  title: {color: "#eaf2ff", fontSize: 22, fontWeight: "900", marginTop: 2},
-  subtitle: {color: "#7286a1", fontSize: 11, marginTop: 1},
-  livePill: {alignItems: "center", backgroundColor: "#0b211c", borderColor: "#1e483b", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 6, paddingHorizontal: 9, paddingVertical: 6},
+  eyebrow: {color: "#55708e", fontSize: 8, fontWeight: "800", letterSpacing: 1.3},
+  title: {color: "#eaf2ff", fontSize: 20, fontWeight: "900", marginTop: 1},
+  subtitle: {color: "#7286a1", fontSize: 10, marginTop: 0},
+  livePill: {alignItems: "center", backgroundColor: "#0b211c", borderColor: "#1e483b", borderRadius: 999, borderWidth: 1, flexDirection: "row", gap: 5, paddingHorizontal: 8, paddingVertical: 5},
   liveDot: {backgroundColor: "#5ce19b", borderRadius: 99, height: 7, width: 7},
-  liveText: {color: "#74e6ae", fontSize: 10, fontWeight: "900"},
-  search: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: 12, marginTop: 12, paddingHorizontal: 10},
-  input: {color: "#e9f3ff", flex: 1, fontSize: 14, fontWeight: "800", paddingVertical: 11},
-  iconButton: {alignItems: "center", backgroundColor: "#16304a", borderRadius: 8, height: 34, justifyContent: "center", width: 34},
-  nav: {maxHeight: 56},
-  navContent: {gap: 8, paddingHorizontal: 12, paddingVertical: 10},
-  navItem: {alignItems: "center", backgroundColor: "#08111d", borderColor: "#16263a", borderRadius: 11, borderWidth: 1, flexDirection: "row", gap: 7, paddingHorizontal: 12, paddingVertical: 9},
+  liveText: {color: "#74e6ae", fontSize: 9, fontWeight: "900"},
+  tape: {backgroundColor: "#050b13", borderBottomColor: "#122235", borderBottomWidth: 1, maxHeight: 48},
+  tapeContent: {gap: 7, paddingHorizontal: 10, paddingVertical: 6},
+  tapeItem: {backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, minWidth: 118, paddingHorizontal: 9, paddingVertical: 6, position: "relative"},
+  tapeLabel: {color: "#c8d7e8", fontSize: 8, fontWeight: "900"},
+  tapeValue: {color: "#edf5ff", fontSize: 11, fontWeight: "800", marginTop: 2},
+  tapeDelta: {color: "#29e77c", fontSize: 10, fontWeight: "900", position: "absolute", right: 8, top: 6},
+  tapeDeltaBad: {color: "#ff5d6c"},
+  search: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: 10, marginTop: 8, paddingHorizontal: 10},
+  input: {color: "#e9f3ff", flex: 1, fontSize: 13, fontWeight: "800", paddingVertical: 9},
+  iconButton: {alignItems: "center", backgroundColor: "#16304a", borderRadius: 8, height: 31, justifyContent: "center", width: 31},
+  events: {maxHeight: 48},
+  eventContent: {gap: 8, paddingHorizontal: 10, paddingTop: 8},
+  eventIntro: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, justifyContent: "center", paddingHorizontal: 10},
+  eventIntroText: {color: "#edf5ff", fontSize: 10, fontWeight: "900"},
+  eventCard: {alignItems: "center", backgroundColor: "#10141d", borderColor: "#2b3041", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 7, minWidth: 165, paddingHorizontal: 9, paddingVertical: 7},
+  eventDot: {backgroundColor: "#ff4d5f", borderRadius: 99, height: 8, width: 8},
+  eventDotMed: {backgroundColor: "#ffbf30"},
+  eventLevel: {color: "#ff5d6c", fontSize: 8, fontWeight: "900"},
+  eventLevelMed: {color: "#ffbf30"},
+  eventTitle: {color: "#dceaff", fontSize: 10, fontWeight: "800"},
+  eventTime: {color: "#7187a1", fontSize: 9, marginLeft: "auto"},
+  nav: {maxHeight: 48},
+  navContent: {gap: 7, paddingHorizontal: 10, paddingVertical: 8},
+  navItem: {alignItems: "center", backgroundColor: "#08111d", borderColor: "#16263a", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 6, paddingHorizontal: 10, paddingVertical: 8},
   navItemActive: {backgroundColor: "#10233a", borderColor: "#235b75"},
-  navText: {color: "#8094ad", fontSize: 12, fontWeight: "800"},
+  navText: {color: "#8094ad", fontSize: 11, fontWeight: "800"},
   navTextActive: {color: "#58d7ff"},
   body: {flex: 1},
-  bodyContent: {paddingBottom: 36, paddingHorizontal: 12},
-  pageHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 12, marginTop: 8},
-  pageTitle: {color: "#eaf2ff", flex: 1, fontSize: 22, fontWeight: "900"},
-  refresh: {alignItems: "center", borderColor: "#273b55", borderRadius: 9, borderWidth: 1, flexDirection: "row", gap: 6, paddingHorizontal: 10, paddingVertical: 7},
-  refreshText: {color: "#b9cbe0", fontSize: 11, fontWeight: "800"},
-  hero: {backgroundColor: "#0b1726", borderColor: "#1b3048", borderRadius: 16, borderWidth: 1, marginBottom: 14, padding: 18},
-  badge: {alignSelf: "flex-start", backgroundColor: "#0a2636", borderColor: "#174d65", borderRadius: 999, borderWidth: 1, color: "#5edcff", fontSize: 9, fontWeight: "900", letterSpacing: 1, marginBottom: 8, overflow: "hidden", paddingHorizontal: 9, paddingVertical: 5},
-  heroTicker: {color: "#ffffff", fontSize: 34, fontWeight: "900"},
-  heroName: {color: "#8397b0", fontSize: 13, lineHeight: 20, marginTop: 4},
-  cards: {flexDirection: "row", flexWrap: "wrap", gap: 9, marginBottom: 10},
-  card: {backgroundColor: "#0b1725", borderColor: "#1a2d44", borderRadius: 12, borderWidth: 1, minHeight: 84, padding: 12, width: "48%"},
-  cardLabel: {color: "#68809c", fontSize: 9, fontWeight: "800", letterSpacing: 0.8, textTransform: "uppercase"},
-  cardValue: {color: "#edf5ff", fontSize: 19, fontWeight: "900", marginTop: 8},
-  panel: {backgroundColor: "#091522", borderColor: "#1a2c43", borderRadius: 15, borderWidth: 1, marginBottom: 14, overflow: "hidden", padding: 15},
-  panelTitle: {color: "#e7f2ff", fontSize: 15, fontWeight: "900", marginBottom: 12},
-  spark: {alignItems: "flex-end", backgroundColor: "#07111d", borderColor: "#14263a", borderRadius: 11, borderWidth: 1, flexDirection: "row", gap: 3, height: 160, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 12},
+  bodyContent: {flexGrow: 1, paddingBottom: 42, paddingHorizontal: 10},
+  pageHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 7, marginTop: 4},
+  pageTitle: {color: "#eaf2ff", flex: 1, fontSize: 18, fontWeight: "900"},
+  refresh: {alignItems: "center", borderColor: "#273b55", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 5, paddingHorizontal: 9, paddingVertical: 6},
+  refreshText: {color: "#b9cbe0", fontSize: 10, fontWeight: "800"},
+  quotePanel: {backgroundColor: "#081929", borderColor: "#1b3048", borderRadius: 10, borderWidth: 1, marginBottom: 9, overflow: "hidden"},
+  quoteTop: {alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "space-between", padding: 12},
+  quoteIdentity: {flex: 1, minWidth: 0},
+  quoteTicker: {color: "#ffffff", fontSize: 22, fontWeight: "900"},
+  quoteName: {color: "#c8d7e8", fontSize: 11, marginTop: 2},
+  quoteSector: {color: "#7187a1", fontSize: 9, marginTop: 2},
+  quotePriceBox: {alignItems: "flex-end"},
+  quotePrice: {color: "#edf5ff", fontSize: 19, fontWeight: "900"},
+  quoteChange: {color: "#29e77c", fontSize: 11, fontWeight: "900", marginTop: 2},
+  quoteChangeBad: {color: "#ff5d6c"},
+  realTime: {color: "#74e6ae", fontSize: 9, marginTop: 2},
+  timeframes: {borderTopColor: "#13283f", borderTopWidth: 1, flexDirection: "row", gap: 5, paddingHorizontal: 10, paddingVertical: 7},
+  timeframe: {borderRadius: 6, paddingHorizontal: 8, paddingVertical: 4},
+  timeframeActive: {backgroundColor: "#153b52"},
+  timeframeText: {color: "#8499b1", fontSize: 10},
+  timeframeTextActive: {color: "#67ddff", fontWeight: "900"},
+  compactToolbar: {flexDirection: "row", flexWrap: "wrap", gap: 5, marginBottom: 7},
+  hero: {backgroundColor: "#0b1726", borderColor: "#1b3048", borderRadius: 12, borderWidth: 1, marginBottom: 10, padding: 13},
+  badge: {alignSelf: "flex-start", backgroundColor: "#0a2636", borderColor: "#174d65", borderRadius: 999, borderWidth: 1, color: "#5edcff", fontSize: 8, fontWeight: "900", letterSpacing: 1, marginBottom: 6, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4},
+  heroTicker: {color: "#ffffff", fontSize: 23, fontWeight: "900"},
+  heroName: {color: "#8397b0", fontSize: 12, lineHeight: 18, marginTop: 3},
+  cards: {flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8},
+  card: {backgroundColor: "#0b1725", borderColor: "#1a2d44", borderRadius: 9, borderWidth: 1, minHeight: 62, padding: 9, width: "48%"},
+  cardLabel: {color: "#68809c", fontSize: 8, fontWeight: "800", letterSpacing: 0.7, textTransform: "uppercase"},
+  cardValue: {color: "#edf5ff", fontSize: 15, fontWeight: "900", marginTop: 5},
+  terminalGrid: {flexDirection: "row", gap: 8, marginBottom: 0},
+  panel: {backgroundColor: "#091522", borderColor: "#1a2c43", borderRadius: 10, borderWidth: 1, flex: 1, marginBottom: 9, minWidth: 0, overflow: "hidden", padding: 11},
+  panelTitle: {color: "#e7f2ff", fontSize: 13, fontWeight: "900", marginBottom: 8},
+  mobileMovers: {flexDirection: "row", flexWrap: "wrap", gap: 8},
+  mobileMover: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, paddingVertical: 8},
+  setupHead: {alignItems: "flex-start", flexDirection: "row", justifyContent: "space-between", marginBottom: 6},
+  setupSignal: {color: "#43e778", fontSize: 14, fontWeight: "900"},
+  setupSub: {color: "#74e6ae", fontSize: 10, marginTop: 2},
+  setupScore: {color: "#edf5ff", fontSize: 22, fontWeight: "900"},
+  scoreSuffix: {color: "#8aa0b8", fontSize: 9},
+  spark: {alignItems: "flex-end", backgroundColor: "#07111d", borderColor: "#14263a", borderRadius: 9, borderWidth: 1, flexDirection: "row", gap: 3, height: 132, overflow: "hidden", paddingHorizontal: 8, paddingVertical: 10},
   sparkBar: {borderRadius: 4, flex: 1, minWidth: 3},
-  chartMeta: {flexDirection: "row", justifyContent: "space-between", marginTop: 8},
-  metaText: {color: "#607994", fontSize: 10},
-  decisionMain: {color: "#68dcff", fontSize: 34, fontWeight: "900", marginBottom: 8},
-  valueRow: {borderBottomColor: "#17283d", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingVertical: 10},
-  valueLabel: {color: "#7086a0", fontSize: 12},
-  valueValue: {color: "#eaf2ff", fontSize: 12, fontWeight: "900"},
-  longText: {color: "#9aadc3", fontSize: 12, lineHeight: 19},
-  noticeText: {backgroundColor: "#0b1928", borderColor: "#27405b", borderRadius: 11, borderWidth: 1, color: "#83a0bb", fontSize: 12, lineHeight: 19, padding: 12},
+  chartMeta: {flexDirection: "row", justifyContent: "space-between", marginTop: 6},
+  metaText: {color: "#607994", fontSize: 9},
+  decisionMain: {color: "#68dcff", fontSize: 24, fontWeight: "900", marginBottom: 5},
+  valueRow: {borderBottomColor: "#17283d", borderBottomWidth: 1, flexDirection: "row", justifyContent: "space-between", paddingVertical: 6},
+  valueLabel: {color: "#7086a0", fontSize: 10},
+  valueValue: {color: "#eaf2ff", fontSize: 10, fontWeight: "900", marginLeft: 6},
+  longText: {color: "#9aadc3", fontSize: 11, lineHeight: 17},
+  noticeText: {backgroundColor: "#0b1928", borderColor: "#27405b", borderRadius: 9, borderWidth: 1, color: "#83a0bb", fontSize: 11, lineHeight: 17, padding: 10},
   stateBox: {alignItems: "center", gap: 10, justifyContent: "center", minHeight: 220},
   stateText: {color: "#657e99", fontSize: 13},
   errorBox: {backgroundColor: "#1d1112", borderColor: "#60322e", borderRadius: 12, borderWidth: 1, gap: 10, marginBottom: 16, padding: 16},

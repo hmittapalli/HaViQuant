@@ -97,8 +97,8 @@ nav button.active {
 
 .topbar {
   display: grid;
-  grid-template-columns: 360px minmax(0, 1fr) auto;
-  gap: 12px;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) auto;
+  gap: 10px;
   align-items: center;
   min-height: 56px;
   padding: 10px 16px;
@@ -139,23 +139,27 @@ nav button.active {
 
 .tape {
   display: flex;
-  gap: 8px;
-  overflow: hidden;
+  gap: 7px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .tape span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 138px;
+  display: grid;
+  grid-template-columns: minmax(52px, auto) minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 7px;
+  min-width: 152px;
+  max-width: 190px;
   border: 1px solid #19304a;
   border-radius: 7px;
   background: #0a1726;
-  padding: 8px 11px;
+  padding: 7px 10px;
   color: #d6e2ef;
   font-size: 12px;
   white-space: nowrap;
 }
-.tape b { color: white; font-size: 11px; }
+.tape b { color: white; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+.tape em { text-align: right; }
 .good { color: #27e87d !important; }
 .bad { color: #ff5368 !important; }
 .tools { display: flex; align-items: center; gap: 14px; color: #dbe6f3; }
@@ -302,31 +306,36 @@ nav button.active {
 
 .quote-head {
   display: grid;
-  grid-template-columns: minmax(210px, .8fr) 150px 170px 150px 150px 120px;
-  gap: 12px;
-  align-items: center;
+  grid-template-columns: minmax(190px, 1.1fr) minmax(120px, .55fr) repeat(3, minmax(145px, .65fr));
+  gap: 10px;
+  align-items: stretch;
   border: 1px solid #1b4963;
   border-radius: 9px;
   background: #092031;
-  padding: 17px;
+  padding: 14px;
   margin-bottom: 12px;
 }
 .quote-head h1 {
   margin: 0;
   color: white;
-  font-size: 34px;
+  font-size: 30px;
   line-height: 1;
 }
 .quote-head span, .quote-head small { display: block; color: #a4b5c8; margin-top: 5px; }
 .quote-head small { color: #7f95ab; font-size: 11px; }
-.price-block strong { display: block; font-size: 29px; }
+.price-block {
+  display: grid;
+  align-content: center;
+}
+.price-block strong { display: block; font-size: 26px; line-height: 1.05; }
 .price-block em { display: block; font-style: normal; font-weight: 900; font-size: 12px; margin-top: 4px; }
 .range {
   border: 1px solid #17304a;
   border-radius: 8px;
   background: #0a1726;
-  min-height: 62px;
-  padding: 11px;
+  min-height: 58px;
+  padding: 10px;
+  min-width: 0;
 }
 .range label {
   display: block;
@@ -336,7 +345,15 @@ nav button.active {
   letter-spacing: 1px;
   text-transform: uppercase;
 }
-.range b { display: block; font-size: 17px; margin-top: 7px; }
+.range b {
+  display: block;
+  font-size: 16px;
+  line-height: 1.15;
+  margin-top: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .range small { color: #25e483; }
 .watch {
   border: 1px solid #623ab2;
@@ -1397,6 +1414,7 @@ nav button.active {
   .desk { grid-template-columns: 1fr; }
   .right-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quote-head { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .quote-head > div:first-child { grid-column: span 2; }
   .scanner-grid { grid-template-columns: repeat(2, minmax(300px, 1fr)); }
   .scanner-controls { grid-template-columns: 1fr; }
   .geo-grid { grid-template-columns: 1fr; }
@@ -1414,6 +1432,8 @@ nav button.active {
   .eventbar { position: static; }
   .content { overflow: visible; padding: 12px; }
   .quote-head, .lower-grid, .right-rail, .module-grid, .scanner-actions, .scanner-grid, .geo-cols, .policy-detail { grid-template-columns: 1fr; }
+  .quote-head > div:first-child { grid-column: auto; }
+  .quote-head { padding: 12px; }
   .chart-shell { height: 420px; min-height: 420px; }
   .movers { overflow-x: auto; }
 }
