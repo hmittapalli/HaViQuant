@@ -157,7 +157,8 @@ const sessionStats = () => {
   const rows = candles().filter((r) => Number.isFinite(Number(r.high)) && Number.isFinite(Number(r.low)));
   if (!rows.length) return {range: "Not returned", volume: "Not returned"};
   const latest = String(first(rows[rows.length - 1]?.time, rows[rows.length - 1]?.date, "")).slice(0, 10);
-  const sessionRows = latest ? rows.filter((r) => String(first(r.time, r.date, "")).slice(0, 10) === latest) : rows.slice(-78);
+  const matchedRows = latest ? rows.filter((r) => String(first(r.time, r.date, "")).slice(0, 10) === latest) : [];
+  const sessionRows = matchedRows.length ? matchedRows : rows.slice(-78);
   const high = Math.max(...sessionRows.map((r) => Number(r.high)));
   const low = Math.min(...sessionRows.map((r) => Number(r.low)));
   const volume = sessionRows.reduce((sum, r) => sum + (Number(r.volume) || 0), 0);
@@ -545,6 +546,7 @@ function tradingDesk() {
 }
 
 function chartPanel() {
+  const a = state.analysis || {};
   return card("Trading Chart", `
     <div class="chart-toolbar">
       ${Object.keys(TIMEFRAMES).map((tf) => `<button class="${state.tf === tf ? "active" : ""}" data-tf="${tf}" data-testid="tf-${tf}">${tf}</button>`).join("")}
