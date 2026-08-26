@@ -1172,7 +1172,7 @@ function ScannerPage({ticker}: {ticker: string}) {
       </Panel>
       <Panel title="Current Top Candidates">
         {rows.map((row, index) => (
-          <View key={row.symbol} style={styles.scanRow}>
+          <View key={`${row.symbol}-${index}`} style={styles.scanRow}>
             <View style={styles.rankBubble}><Text style={styles.rankText}>{index + 1}</Text></View>
             <View style={styles.scanBody}>
               <View style={styles.scanHead}>
@@ -1295,7 +1295,8 @@ function MorePage({setPage}: {setPage: (page: Page) => void}) {
 }
 
 function scannerRows(sector: string, ticker: string) {
-  const universe = sector === "Biotech / Healthcare"
+  const cleanTicker = ticker.trim().toUpperCase();
+  const baseUniverse = sector === "Biotech / Healthcare"
     ? ["MRNA", "LLY", "NVO", "VRTX", "REGN"]
     : sector === "Space / Defense"
       ? ["LMT", "RTX", "NOC", "BA", "RKLB"]
@@ -1305,7 +1306,8 @@ function scannerRows(sector: string, ticker: string) {
           ? ["JPM", "BAC", "GS", "HOOD", "COIN"]
           : sector === "Software / Cloud"
             ? ["NET", "CRWD", "PANW", "DDOG", "SNOW"]
-            : ["NVDA", "AMD", "AVGO", "TSLA", ticker];
+            : ["NVDA", "AMD", "AVGO", "TSLA", cleanTicker];
+  const universe = Array.from(new Set(baseUniverse.filter(Boolean)));
   return universe.map((symbol, index) => ({
     symbol,
     score: 86 - index * 4,
