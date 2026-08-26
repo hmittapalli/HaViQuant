@@ -128,6 +128,31 @@ function money(value: any) {
   return `${sign}$${abs.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
 }
 
+function displayData(value: any, fallback = "Not returned") {
+  const v = value === null || value === undefined || value === "" || value === "-" || value === "N/A" ? null : value;
+  return v ?? fallback;
+}
+
+function sessionStats(analysis: AnyRecord) {
+  const rows = arr(first(analysis.candles, analysis.chart, analysis.rows)).filter(
+    (row) => Number.isFinite(Number(row.high)) && Number.isFinite(Number(row.low))
+  );
+  if (!rows.length) return {range: "Not returned", volume: "Not returned"};
+  const latest = String(first(rows[rows.length - 1]?.time, rows[rows.length - 1]?.date, "")).slice(0, 10);
+  const sessionRows = latest ? rows.filter((row) => String(first(row.time, row.date, "")).slice(0, 10) === latest) : rows.slice(-78);
+  const high = Math.max(...sessionRows.map((row) => Number(row.high)));
+  const low = Math.min(...sessionRows.map((row) => Number(row.low)));
+  const volume = sessionRows.reduce((sum, row) => sum + (Number(row.volume) || 0), 0);
+  return {
+    range: Number.isFinite(high) && Number.isFinite(low) ? `${money(low)} - ${money(high)}` : "Not returned",
+    volume: volume > 0 ? money(volume) : "Not returned",
+  };
+}
+
+function marketCapText(profile: AnyRecord, fundamental?: AnyRecord) {
+  return displayData(money(first(profile.market_cap, profile.marketCap, fundamental?.profile?.market_cap, fundamental?.profile?.marketCap, fundamental?.market_cap, fundamental?.marketCap)));
+}
+
 async function api(path: string, token?: string | null) {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -543,6 +568,8 @@ function DesktopTerminal({
 }
 
 function DesktopQuoteHeader({analysis, profile, ticker}: {analysis: AnyRecord; profile: AnyRecord; ticker: string}) {
+  const change = Number(analysis.quote?.change_pct);
+  const stats = sessionStats(analysis);
   return (
     <View style={styles.desktopQuote}>
       <View style={styles.desktopQuoteIdentity}>
@@ -552,14 +579,14 @@ function DesktopQuoteHeader({analysis, profile, ticker}: {analysis: AnyRecord; p
       </View>
       <View style={styles.desktopQuotePrice}>
         <Text style={styles.desktopPrice}>{money(analysis.quote?.price)}</Text>
-        <Text style={styles.desktopGain}>{pct(analysis.quote?.change_pct)}</Text>
+        <Text style={styles.desktopGain}>{Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "-"}</Text>
         <Text style={styles.realTime}>Real-time</Text>
       </View>
       <View style={styles.desktopQuoteMetrics}>
         {[
-          ["Day's Range", "929.40 - 949.80"],
-          ["Volume", "53.28M"],
-          ["Market Cap", money(first(profile.market_cap, profile.marketCap))],
+          ["Session Range", stats.range],
+          ["Session Volume", stats.volume],
+          ["Market Cap", marketCapText(profile)],
         ].map(([label, value]) => (
           <View key={label} style={styles.desktopRangeCard}>
             <Text style={styles.cardLabel}>{label}</Text>
@@ -1673,7 +1700,7 @@ const styles = StyleSheet.create({
   tapeContent: {gap: 7, paddingHorizontal: 10, paddingVertical: 6},
   tapeItem: {backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, minWidth: 118, paddingHorizontal: 9, paddingVertical: 6, position: "relative"},
   tapeLabel: {color: "#c8d7e8", fontSize: 8, fontWeight: "900"},
-  tapeValue: {color: "#edf5ff", fontSize: 11, fontWeight: "800", marginTop: 2},
+  tapeValue: {color: "#edf5ff", fontSize: 11, fontWeight: "800", marginRight: 38, marginTop: 2},
   tapeDelta: {color: "#29e77c", fontSize: 10, fontWeight: "900", position: "absolute", right: 8, top: 6},
   tapeDeltaBad: {color: "#ff5d6c"},
   search: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 8, marginHorizontal: 10, marginTop: 8, paddingHorizontal: 10},

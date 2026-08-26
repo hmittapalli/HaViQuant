@@ -148,6 +148,34 @@ const money = (x) => {
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
   return `${sign}$${abs.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
 };
+const displayValue = (x, fallback = "Not returned") => {
+  const v = x ?? "";
+  return v === "" || v === "-" || v === "N/A" ? fallback : v;
+};
+const candles = () => arr(first(state.analysis?.candles, state.analysis?.chart, state.analysis?.rows));
+const sessionStats = () => {
+  const rows = candles().filter((r) => Number.isFinite(Number(r.high)) && Number.isFinite(Number(r.low)));
+  if (!rows.length) return {range: "Not returned", volume: "Not returned"};
+  const latest = String(first(rows[rows.length - 1]?.time, rows[rows.length - 1]?.date, "")).slice(0, 10);
+  const sessionRows = latest ? rows.filter((r) => String(first(r.time, r.date, "")).slice(0, 10) === latest) : rows.slice(-78);
+  const high = Math.max(...sessionRows.map((r) => Number(r.high)));
+  const low = Math.min(...sessionRows.map((r) => Number(r.low)));
+  const volume = sessionRows.reduce((sum, r) => sum + (Number(r.volume) || 0), 0);
+  return {
+    range: Number.isFinite(high) && Number.isFinite(low) ? `${money(low)} - ${money(high)}` : "Not returned",
+    volume: volume > 0 ? money(volume) : "Not returned",
+  };
+};
+const marketCap = () => money(first(
+  (state.company?.profile || {}).market_cap,
+  (state.company?.profile || {}).marketCap,
+  state.company?.market_cap,
+  state.company?.marketCap,
+  state.fundamental?.profile?.market_cap,
+  state.fundamental?.profile?.marketCap,
+  state.fundamental?.market_cap,
+  state.fundamental?.marketCap
+));
 
 async function api(path) {
   const token = localStorage.getItem("haviquant_access_token");
@@ -321,7 +349,7 @@ function marketTape() {
     ["VIX", "15.24", "-6.25%"],
     [state.ticker, money(a.price), Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "LIVE"],
   ];
-  return `<div class="tape">${items.map(([l, v, d]) => `<span><b>${esc(l)}</b>${esc(v)}<em class="${String(d).startsWith("-") ? "bad" : "good"}">${esc(d)}</em></span>`).join("")}</div>`;
+  return `<div class="tape">${items.map(([l, v, d]) => `<span><b>${esc(l)}</b><strong>${esc(v)}</strong><em class="${String(d).startsWith("-") ? "bad" : "good"}">${esc(d)}</em></span>`).join("")}</div>`;
 }
 
 function events() {
@@ -484,15 +512,17 @@ function tradingDesk() {
   const profile = state.company?.profile || state.company || {};
   const price = Number(a.price);
   const change = Number(a.change_pct);
+  const stats = sessionStats();
+  const cap = marketCap();
   return `
     <div class="desk">
       <section class="chart-zone">
         <div class="quote-head">
           <div><h1>${esc(state.ticker)}</h1><span>${esc(profile.name || "NVIDIA Corporation")}</span><small>${esc(first(profile.sector, "Technology"))} - ${esc(first(profile.industry, "Semiconductors"))}</small></div>
           <div class="price-block"><strong>${money(price)}</strong><em class="${change < 0 ? "bad" : "good"}">${change >= 0 ? "+" : ""}${pct(change)}</em><small>Real-time</small></div>
-          <div class="range"><label>Day's Range</label><b>929.40 - 949.80</b></div>
-          <div class="range"><label>Volume</label><b>53.28M</b><small>1.82x Avg</small></div>
-          <div class="range"><label>Market Cap</label><b>${money(first(profile.market_cap, profile.marketCap, state.fundamental?.marketCap))}</b></div>
+          <div class="range"><label>Session Range</label><b title="Computed from returned intraday candle high/low values">${esc(stats.range)}</b><small>From live candles</small></div>
+          <div class="range"><label>Session Volume</label><b>${esc(stats.volume)}</b><small>${num(a.volume_ratio)}x Avg</small></div>
+          <div class="range"><label>Market Cap</label><b>${esc(displayValue(cap))}</b><small>Provider field</small></div>
           <button class="watch">In Watchlist</button>
         </div>
         ${chartPanel()}
@@ -523,9 +553,9 @@ function chartPanel() {
       <button class="tool" id="resetChart" title="Reset View" aria-label="Reset View">${toolIcon("Reset")}</button>
     </div>
     <div class="chart-stats">
-      <div><span>Day's Range</span><b>929.40 - 949.80</b></div>
-      <div><span>Volume</span><b>53.28M</b><em>1.82x Avg</em></div>
-      <div><span>Market Cap</span><b>${money(first((state.company?.profile || state.company || {}).market_cap, state.fundamental?.marketCap))}</b></div>
+      <div><span>Session Range</span><b>${esc(sessionStats().range)}</b></div>
+      <div><span>Session Volume</span><b>${esc(sessionStats().volume)}</b><em>${num(a.volume_ratio)}x Avg</em></div>
+      <div><span>Market Cap</span><b>${esc(displayValue(marketCap()))}</b></div>
       <div><span>Active Tool</span><b>${esc(state.chartTool)}</b><em>${esc(toolStatusText())}</em></div>
     </div>
     <div class="chart-shell">

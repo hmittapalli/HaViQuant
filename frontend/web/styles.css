@@ -145,21 +145,35 @@ nav button.active {
 }
 .tape span {
   display: grid;
-  grid-template-columns: minmax(52px, auto) minmax(0, 1fr) auto;
-  align-items: baseline;
-  column-gap: 7px;
-  min-width: 152px;
-  max-width: 190px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 2px;
+  min-width: 148px;
+  max-width: 176px;
   border: 1px solid #19304a;
   border-radius: 7px;
   background: #0a1726;
-  padding: 7px 10px;
+  padding: 6px 10px;
   color: #d6e2ef;
   font-size: 12px;
   white-space: nowrap;
 }
 .tape b { color: white; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
-.tape em { text-align: right; }
+.tape strong {
+  grid-column: 1 / -1;
+  color: #dbe8f6;
+  font-size: 12px;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tape em {
+  font-size: 11px;
+  line-height: 1;
+  text-align: right;
+}
 .good { color: #27e87d !important; }
 .bad { color: #ff5368 !important; }
 .tools { display: flex; align-items: center; gap: 14px; color: #dbe6f3; }
@@ -353,6 +367,11 @@ nav button.active {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.range small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
 }
 .range small { color: #25e483; }
 .watch {
