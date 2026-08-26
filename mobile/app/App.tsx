@@ -188,6 +188,17 @@ function friendlyValue(key: string, value: any) {
   return text(value);
 }
 
+function hasUsefulValue(value: any): boolean {
+  if (value === null || value === undefined || value === "" || value === "-" || value === "N/A") return false;
+  if (Array.isArray(value)) return value.some(hasUsefulValue);
+  if (isObj(value)) return Object.values(value).some(hasUsefulValue);
+  return true;
+}
+
+function hasUsefulRows(data: any): boolean {
+  return arr(data).some(hasUsefulValue);
+}
+
 function sentimentLabel(item: AnyRecord) {
   const raw = first(item.sentiment?.label, item.sentiment, item.tone, item.sentiment_label, "Neutral");
   const value = typeof raw === "string" ? raw : raw?.label || raw?.classification || "Neutral";
@@ -1123,7 +1134,7 @@ function MetricGrid({items}: {items: [string, any][]}) {
         <View key={label} style={styles.card}>
           <Text style={styles.cardLabel}>{label}</Text>
           <Text numberOfLines={2} adjustsFontSizeToFit style={styles.cardValue}>
-            {value ?? "-"}
+            {displayData(value)}
           </Text>
         </View>
       ))}
@@ -1565,12 +1576,11 @@ function CompanyPage({company, ticker}: {company: AnyRecord; ticker: string}) {
       <Panel title="Business Overview">
         <Text style={styles.longText}>{p.description || p.summary || "No extended company description returned."}</Text>
       </Panel>
-      <DataList title="Products / Demand" data={company.products_demand?.future_demand || company.products_demand} />
-      <DataList title="Backlog" data={company.backlog} />
-      <DataList title="Competition" data={company.competition} />
-      <DataList title="Risks" data={company.risks} />
-      <DataList title="Governance & Ethics" data={company.governance_ethics} />
-      <DataList title="Sources" data={company.sources} />
+      <OptionalDataList title="Products / Demand" data={company.products_demand?.future_demand || company.products_demand} />
+      <OptionalDataList title="Backlog" data={company.backlog} />
+      <OptionalDataList title="Competition" data={company.competition} />
+      <OptionalDataList title="Risks" data={company.risks} />
+      <OptionalDataList title="Governance & Ethics" data={company.governance_ethics} />
     </>
   );
 }
@@ -1609,9 +1619,9 @@ function FundamentalPanel({company, fundamental}: {company: AnyRecord; fundament
         />
         <Text style={styles.longText}>{p.description || p.summary || "No company description returned."}</Text>
       </Panel>
-      <DataList title="Quarterly Fundamentals" data={fundamental.quarters || company.quarters} />
-      <DataList title="Competition" data={company.competition} />
-      <DataList title="Fundamental Risks" data={fundamental.risks || company.risks} />
+      <OptionalDataList title="Quarterly Fundamentals" data={fundamental.quarters || company.quarters} />
+      <OptionalDataList title="Competition" data={company.competition} />
+      <OptionalDataList title="Fundamental Risks" data={fundamental.risks || company.risks} />
     </>
   );
 }
@@ -1635,7 +1645,7 @@ function TechnicalPage({
       </Panel>
       <ChartPanel analysis={analysis} rows={analysis.chart} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />
       <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
-      <DataList title="Multi-Timeframe Intelligence" data={analysis.technical?.mtf} />
+      <OptionalDataList title="Multi-Timeframe Intelligence" data={analysis.technical?.mtf} />
     </>
   );
 }
@@ -1679,10 +1689,10 @@ function ResearchPage({macro, news, ticker}: {macro: AnyRecord; news: AnyRecord;
       <Panel title="Research Validation">
         <Text style={styles.noticeText}>Evidence and macro research are isolated from the production BUY/SELL decision.</Text>
       </Panel>
-      <DataList title="Geopolitical Signals" data={macro.geopolitical} />
-      <DataList title="Policy / Regulation Signals" data={macro.politics} />
-      <DataList title="Macro Signals" data={macro.macro} />
-      <DataList title="News Evidence" data={news.items || news} />
+      <OptionalDataList title="Geopolitical Signals" data={macro.geopolitical} />
+      <OptionalDataList title="Policy / Regulation Signals" data={macro.politics} />
+      <OptionalDataList title="Macro Signals" data={macro.macro} />
+      <OptionalDataList title="News Evidence" data={news.items || news} />
     </>
   );
 }
@@ -1858,8 +1868,8 @@ function BacktestingPage({analysis, macro, ticker}: {analysis: AnyRecord; macro:
           ["Signal", analysis.signal || "WAIT"],
         ]}
       />
-      <DataList title="Multi-Timeframe Inputs" data={analysis.technical?.mtf} />
-      <DataList title="Macro Validation Inputs" data={macro.macro} />
+      <OptionalDataList title="Multi-Timeframe Inputs" data={analysis.technical?.mtf} />
+      <OptionalDataList title="Macro Validation Inputs" data={macro.macro} />
     </>
   );
 }
@@ -1901,12 +1911,17 @@ function NewsPage({news, ticker}: {news: AnyRecord; ticker: string}) {
 }
 
 function DataList({title, data}: {title: string; data: any}) {
-  const rows = arr(data).slice(0, 20);
+  const rows = arr(data).filter(hasUsefulValue).slice(0, 20);
   return (
     <Panel title={title}>
-      {rows.length ? rows.map((row, index) => <DataRow key={index} row={row} />) : <EmptyState label="No provider data returned." />}
+      {rows.length ? rows.map((row, index) => <DataRow key={index} row={row} />) : <EmptyState label="Not available from the current data provider." />}
     </Panel>
   );
+}
+
+function OptionalDataList({title, data}: {title: string; data: any}) {
+  if (!hasUsefulRows(data)) return null;
+  return <DataList title={title} data={data} />;
 }
 
 function DataRow({row}: {row: any}) {
@@ -1914,10 +1929,11 @@ function DataRow({row}: {row: any}) {
     return <Text style={styles.longText}>{text(row)}</Text>;
   }
 
-  const hidden = new Set(["url", "link", "published_iso", "publishedIso", "recency"]);
+  const hidden = new Set(["url", "link", "source_url", "published_iso", "publishedIso", "recency", "sources", "source"]);
   const entries = Object.entries(row)
-    .filter(([key, value]) => !hidden.has(key) && value !== null && value !== undefined && value !== "")
+    .filter(([key, value]) => !hidden.has(key) && hasUsefulValue(value))
     .slice(0, 6);
+  if (!entries.length) return null;
   return (
     <View style={styles.dataRow}>
       {entries.map(([key, value]) => (
