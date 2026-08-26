@@ -394,7 +394,20 @@ export default function App() {
         </View>
       </View>
 
-      <ScrollView style={styles.body} contentContainerStyle={styles.bodyContent}>
+      <ScrollView
+        alwaysBounceVertical
+        bounces
+        contentContainerStyle={styles.bodyContent}
+        contentInset={{bottom: 16}}
+        directionalLockEnabled={false}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        scrollEnabled
+        scrollEventThrottle={16}
+        scrollIndicatorInsets={{bottom: 74}}
+        showsVerticalScrollIndicator
+        style={styles.body}
+      >
         <MarketTape analysis={analysis} ticker={ticker} />
         <View style={styles.search}>
           <Ionicons name="search-outline" size={17} color="#7087a3" />
@@ -733,7 +746,7 @@ function SentimentBody() {
 
 function BottomMovers({watch, chooseTicker}: {watch: string[]; chooseTicker: (ticker: string) => void}) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bottomMovers} contentContainerStyle={styles.bottomMoverContent} testID="top-movers">
+    <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.bottomMovers} contentContainerStyle={styles.bottomMoverContent} testID="top-movers">
       <Text style={styles.bottomTitle}>TOP MOVERS</Text>
       {watch.map((symbol, index) => (
         <TouchableOpacity key={symbol} onPress={() => chooseTicker(symbol)} style={styles.mover}>
@@ -755,7 +768,7 @@ function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
   ];
 
   return (
-    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tape} contentContainerStyle={styles.tapeContent}>
+    <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tape} contentContainerStyle={styles.tapeContent}>
       {marketItems.map(([label, value, delta]) => (
         <View key={label} style={styles.tapeItem}>
           <Text style={styles.tapeLabel}>{label}</Text>
@@ -775,7 +788,7 @@ function EventStrip() {
   ];
 
   return (
-    <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.events} contentContainerStyle={styles.eventContent}>
+    <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.events} contentContainerStyle={styles.eventContent}>
       <View style={styles.eventIntro}>
         <Text style={styles.eventIntroText}>Today's Key Events</Text>
       </View>
@@ -1140,7 +1153,7 @@ function ScannerPage({ticker}: {ticker: string}) {
       />
       <Panel title="Scanner Alert Setup">
         <Text style={styles.sectionLabel}>Sector scope</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+        <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
           {SECTORS.map((item) => (
             <TouchableOpacity key={item} onPress={() => setSector(item)} style={[styles.filterChip, sector === item && styles.filterChipActive]}>
               <Text style={[styles.filterChipText, sector === item && styles.filterChipTextActive]}>{item}</Text>
@@ -1148,7 +1161,7 @@ function ScannerPage({ticker}: {ticker: string}) {
           ))}
         </ScrollView>
         <Text style={styles.sectionLabel}>Alert trigger</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+        <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
           {SCAN_TRIGGERS.map((item) => (
             <TouchableOpacity key={item} onPress={() => setTrigger(item)} style={[styles.filterChip, trigger === item && styles.filterChipActive]}>
               <Text style={[styles.filterChipText, trigger === item && styles.filterChipTextActive]}>{item}</Text>
