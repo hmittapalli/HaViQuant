@@ -1,0 +1,107 @@
+/Users/harimittapalli/Downloads/havi_v26 2/.venv/lib/python3.9/site-packages/urllib3/__init__.py:35: NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+, currently the 'ssl' module is compiled with 'LibreSSL 2.8.3'. See: https://github.com/urllib3/urllib3/issues/3020
+  warnings.warn(
+INFO:     Started server process [7255]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:54562 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54563 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54583 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54585 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54584 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54586 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54607 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54586 - "GET /api/v1/company-intelligence/AAPL?quarters=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54647 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54648 - "GET /api/v1/market/quote?ticker=NVDA HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54650 - "GET /api/v1/market/360?ticker=NVDA HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55216 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55218 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55217 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55219 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55240 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55242 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55243 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55241 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55243 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55241 - "GET /api/v1/company-intelligence/AAPL?quarters=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55241 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55270 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55243 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55271 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55291 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55293 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55292 - "GET /api/v1/market/analysis?ticker=AAPL&period=7d&interval=1m&include_mtf=false HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55294 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55373 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55374 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55375 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55376 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55376 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55374 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55373 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55375 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55375 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55374 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55376 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55373 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55373 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55374 - "GET /api/v1/market/news?ticker=SPCX HTTP/1.1" 200 OK
+$SPCX: possibly delisted; no price data found  (period=60d) (Yahoo error = "15m data not available for startTime=1781271000 and endTime=1786883961. The requested range must be within the last 60 days.")
+
+1 Failed download:
+['SPCX']: possibly delisted; no price data found  (period=60d) (Yahoo error = "15m data not available for startTime=1781271000 and endTime=1786883961. The requested range must be within the last 60 days.")
+$SPCX: possibly delisted; no price data found  (period=60d) (Yahoo error = "5m data not available for startTime=1781271000 and endTime=1786883961. The requested range must be within the last 60 days.")
+
+1 Failed download:
+['SPCX']: possibly delisted; no price data found  (period=60d) (Yahoo error = "5m data not available for startTime=1781271000 and endTime=1786883961. The requested range must be within the last 60 days.")
+INFO:     127.0.0.1:55376 - "GET /api/v1/market/analysis?ticker=SPCX&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55375 - "GET /api/v1/market/macro?ticker=SPCX HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55467 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55466 - "GET /api/v1/market/analysis?ticker=SPCX&period=7d&interval=1m&include_mtf=false HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55468 - "GET /api/v1/market/news?ticker=SPCX HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55469 - "GET /api/v1/market/macro?ticker=SPCX HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55535 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55535 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55556 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55554 - "GET /api/v1/company-intelligence/SPCX?quarters=10 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55606 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55616 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55616 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55852 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55854 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55853 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55855 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55948 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55951 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55950 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55949 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56030 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56031 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56029 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56029 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56030 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56031 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56031 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56030 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56029 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56362 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56364 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56363 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56365 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56505 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56507 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56508 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56506 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56875 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56877 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56876 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56878 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56878 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56878 - "GET /api/v1/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56877 - "GET /api/v1/market/news?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56875 - "GET /api/v1/market/macro?ticker=AAPL HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56876 - "GET /api/v1/market/analysis?ticker=AAPL&period=6mo&interval=1d&include_mtf=true HTTP/1.1" 200 OK
