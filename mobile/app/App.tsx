@@ -56,7 +56,7 @@ const BOTTOM_NAV: {id: Page; label: string; icon: keyof typeof Ionicons.glyphMap
   {id: "Dashboard", label: "Home", icon: "home-outline"},
   {id: "Scanner", label: "Scanner", icon: "scan-outline"},
   {id: "Alerts", label: "Alerts", icon: "notifications-outline"},
-  {id: "Portfolio", label: "Portfolio", icon: "wallet-outline"},
+  {id: "News", label: "News", icon: "newspaper-outline"},
   {id: "More", label: "More", icon: "ellipsis-horizontal-outline"},
 ];
 
@@ -115,7 +115,7 @@ function first(...values: any[]) {
 }
 
 function text(value: any) {
-  if (value === null || value === undefined || value === "") return "-";
+  if (value === null || value === undefined || value === "" || value === "-") return "Not returned";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
   try {
     return JSON.stringify(value);
@@ -126,23 +126,75 @@ function text(value: any) {
 
 function num(value: any, digits = 2) {
   const n = Number(value);
-  return Number.isFinite(n) ? n.toFixed(digits) : "-";
+  return Number.isFinite(n) ? n.toFixed(digits) : "Not returned";
 }
 
 function pct(value: any) {
   const n = Number(value);
-  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "-";
+  return Number.isFinite(n) ? `${n.toFixed(2)}%` : "Not returned";
 }
 
 function money(value: any) {
   const n = Number(value);
-  if (!Number.isFinite(n)) return "-";
+  if (!Number.isFinite(n)) return "Not returned";
   const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
   if (abs >= 1e12) return `${sign}$${(abs / 1e12).toFixed(2)}T`;
   if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
   return `${sign}$${abs.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+}
+
+function compactNumber(value: any) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Not returned";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(2)}K`;
+  return `${sign}${abs.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+}
+
+function friendlyDate(value: any) {
+  if (!value) return "Not returned";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return text(value);
+  return date.toLocaleString(undefined, {
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function friendlyKey(key: string) {
+  return key
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function friendlyValue(key: string, value: any) {
+  if (value === null || value === undefined || value === "" || value === "-") return "Not returned";
+  const lower = key.toLowerCase();
+  if (lower.includes("date") || lower.includes("time") || lower.includes("published") || lower.includes("period")) return friendlyDate(value);
+  if (lower.includes("margin") || lower.includes("growth") || lower.includes("pct") || lower.includes("percent")) return pct(Math.abs(Number(value)) <= 1 ? Number(value) * 100 : value);
+  if (lower.includes("revenue") || lower.includes("profit") || lower.includes("income") || lower.includes("cash") || lower.includes("marketcap") || lower.includes("market cap")) return money(value);
+  if (typeof value === "number") return compactNumber(value);
+  if (typeof value === "string" && value.length > 120) return `${value.slice(0, 117)}...`;
+  return text(value);
+}
+
+function sentimentLabel(item: AnyRecord) {
+  const raw = first(item.sentiment?.label, item.sentiment, item.tone, item.sentiment_label, "Neutral");
+  const value = typeof raw === "string" ? raw : raw?.label || raw?.classification || "Neutral";
+  const clean = String(value).toLowerCase();
+  if (clean.includes("bull") || clean.includes("positive")) return "Positive";
+  if (clean.includes("bear") || clean.includes("negative")) return "Negative";
+  return "Neutral";
 }
 
 function displayData(value: any, fallback = "Not returned") {
@@ -843,6 +895,7 @@ function PageContent({
           <SetupPanel analysis={analysis} />
           <MarketContext analysis={analysis} profile={profile} />
         </TerminalGrid>
+        <MarketTrendPanel analysis={analysis} />
         <SentimentPanel />
         <TopMoversPanel />
         <MetricGrid
@@ -994,6 +1047,27 @@ function MarketContext({analysis, profile}: {analysis: AnyRecord; profile: AnyRe
   );
 }
 
+function MarketTrendPanel({analysis}: {analysis: AnyRecord}) {
+  const technical = analysis.technical || {};
+  const trend = text(first(technical.trend, analysis.trend, "Mixed"));
+  const momentum = text(first(technical.momentum, "Neutral"));
+  const action = text(first(analysis.decision?.action, analysis.signal, "WATCH"));
+  return (
+    <Panel title="Market Trend">
+      <View style={styles.trendRow}>
+        <View style={styles.trendBadge}>
+          <Ionicons name="pulse-outline" size={18} color="#74e6ff" />
+          <Text style={styles.trendBadgeText}>{trend}</Text>
+        </View>
+        <View style={styles.trendCopy}>
+          <Text style={styles.trendTitle}>{action} bias</Text>
+          <Text style={styles.trendText}>Momentum is {momentum}. Confirm with volume, price levels, and the latest market news before acting.</Text>
+        </View>
+      </View>
+    </Panel>
+  );
+}
+
 function Hero({ticker, name, badge}: {ticker: string; name?: string; badge: string}) {
   return (
     <View style={styles.hero}>
@@ -1071,6 +1145,8 @@ function ChartPanel({
   timeframe: Timeframe;
 }) {
   const valid = chartRows(rows);
+  const fallback = valid.length ? [] : fallbackChartRows(analysis.quote?.price);
+  const displayRows = valid.length ? valid : fallback;
 
   return (
     <Panel title={`Market Chart · ${ticker}`}>
@@ -1081,16 +1157,16 @@ function ChartPanel({
           </TouchableOpacity>
         ))}
       </View>
-      {valid.length ? (
+      {displayRows.length ? (
         <>
-          <CandleChart analysis={analysis} rows={valid} height={180} count={42} />
+          <CandleChart analysis={analysis} rows={displayRows} height={180} count={42} />
           <View style={styles.chartMeta}>
-            <Text style={styles.metaText}>{valid.slice(-42).length} candles</Text>
-            <Text style={styles.metaText}>Timeframe: {timeframe}</Text>
+            <Text style={styles.metaText}>{valid.length ? `${valid.slice(-42).length} candles` : "Provider did not return OHLC candles"}</Text>
+            <Text style={styles.metaText}>{timeframe}</Text>
           </View>
         </>
       ) : (
-        <EmptyState label="No historical price rows returned." />
+        <EmptyState label={`No chart data returned for ${timeframe}. Try another ticker or timeframe.`} />
       )}
     </Panel>
   );
@@ -1342,6 +1418,24 @@ function chartRows(rows: any[]) {
       volume: Number(row.volume),
     }))
     .filter((row) => [row.open, row.high, row.low, row.close].every(Number.isFinite));
+}
+
+function fallbackChartRows(price: any) {
+  const base = Number(price);
+  if (!Number.isFinite(base)) return [];
+  return Array.from({length: 24}, (_, index) => {
+    const drift = Math.sin(index / 2.4) * 0.006 + (index - 12) * 0.00025;
+    const open = base * (1 + drift);
+    const close = open * (1 + Math.sin(index / 1.7) * 0.002);
+    return {
+      close,
+      high: Math.max(open, close) * 1.002,
+      low: Math.min(open, close) * 0.998,
+      open,
+      time: `preview-${index}`,
+      volume: 0,
+    };
+  });
 }
 
 function CandleChart({
@@ -1786,9 +1880,16 @@ function NewsPage({news, ticker}: {news: AnyRecord; ticker: string}) {
               }}
               style={styles.newsItem}
             >
-              <Text style={styles.newsTitle}>{item.title || item.headline || "Market update"}</Text>
-              <Text style={styles.newsMeta}>{first(item.publisher, item.source, item.sentiment?.label, "Market source")}</Text>
-              <Text style={styles.longText}>{item.summary || item.description || ""}</Text>
+              <View style={styles.newsHead}>
+                <View style={[styles.newsDot, sentimentLabel(item) === "Positive" && styles.newsDotGood, sentimentLabel(item) === "Negative" && styles.newsDotBad]} />
+                <View style={styles.newsBody}>
+                  <Text style={styles.newsTitle}>{item.title || item.headline || "Market update"}</Text>
+                  <Text style={styles.newsMeta}>
+                    {sentimentLabel(item)} · {text(first(item.publisher, item.source, "Market source"))} · {friendlyDate(first(item.published_at, item.published, item.publishedIso, item.date))}
+                  </Text>
+                  {item.summary || item.description ? <Text style={styles.longText}>{item.summary || item.description}</Text> : null}
+                </View>
+              </View>
             </TouchableOpacity>
           ))
         ) : (
@@ -1813,13 +1914,16 @@ function DataRow({row}: {row: any}) {
     return <Text style={styles.longText}>{text(row)}</Text>;
   }
 
-  const entries = Object.entries(row).slice(0, 8);
+  const hidden = new Set(["url", "link", "published_iso", "publishedIso", "recency"]);
+  const entries = Object.entries(row)
+    .filter(([key, value]) => !hidden.has(key) && value !== null && value !== undefined && value !== "")
+    .slice(0, 6);
   return (
     <View style={styles.dataRow}>
       {entries.map(([key, value]) => (
         <View key={key} style={styles.dataCell}>
-          <Text style={styles.dataLabel}>{key.replace(/_/g, " ")}</Text>
-          <Text style={styles.dataValue}>{text(value)}</Text>
+          <Text style={styles.dataLabel}>{friendlyKey(key)}</Text>
+          <Text style={styles.dataValue}>{friendlyValue(key, value)}</Text>
         </View>
       ))}
     </View>
@@ -2027,6 +2131,12 @@ const styles = StyleSheet.create({
   panelTitle: {color: "#e7f2ff", fontSize: 13, fontWeight: "900", marginBottom: 8},
   mobileMovers: {flexDirection: "row", flexWrap: "wrap", gap: 8},
   mobileMover: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, paddingVertical: 8},
+  trendRow: {alignItems: "flex-start", flexDirection: "row", gap: 10},
+  trendBadge: {alignItems: "center", backgroundColor: "#071522", borderColor: "#1c4862", borderRadius: 10, borderWidth: 1, gap: 5, justifyContent: "center", minHeight: 64, paddingHorizontal: 10, width: 92},
+  trendBadgeText: {color: "#e9f3ff", fontSize: 11, fontWeight: "900", textAlign: "center"},
+  trendCopy: {flex: 1, minWidth: 0},
+  trendTitle: {color: "#74e6ff", fontSize: 14, fontWeight: "900", marginBottom: 4},
+  trendText: {color: "#9aadc3", fontSize: 11, lineHeight: 17},
   sectionLabel: {color: "#7d93ad", fontSize: 10, fontWeight: "900", letterSpacing: 0.8, marginBottom: 7, marginTop: 4, textTransform: "uppercase"},
   chipRow: {gap: 7, paddingBottom: 8},
   filterChip: {backgroundColor: "#07111d", borderColor: "#20334b", borderRadius: 999, borderWidth: 1, paddingHorizontal: 11, paddingVertical: 8},
@@ -2099,6 +2209,11 @@ const styles = StyleSheet.create({
   dataLabel: {color: "#66809a", fontSize: 10, fontWeight: "800", textTransform: "capitalize"},
   dataValue: {color: "#9fb2c8", fontSize: 12, lineHeight: 18},
   newsItem: {borderBottomColor: "#17283c", borderBottomWidth: 1, paddingVertical: 13},
+  newsHead: {alignItems: "flex-start", flexDirection: "row", gap: 9},
+  newsBody: {flex: 1, minWidth: 0},
+  newsDot: {backgroundColor: "#f4c84a", borderRadius: 99, height: 10, marginTop: 5, width: 10},
+  newsDotGood: {backgroundColor: "#2fed86"},
+  newsDotBad: {backgroundColor: "#ff5368"},
   newsTitle: {color: "#e8f1ff", fontSize: 14, fontWeight: "900", lineHeight: 20},
   newsMeta: {color: "#5e7792", fontSize: 10, marginTop: 4},
   authInput: {backgroundColor: "#07111d", borderColor: "#20334b", borderRadius: 10, borderWidth: 1, color: "#ffffff", fontSize: 14, marginTop: 10, paddingHorizontal: 12, paddingVertical: 12},
