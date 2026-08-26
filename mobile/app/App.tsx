@@ -308,16 +308,19 @@ function useWorkspace(ticker: string, timeframe: Timeframe) {
           api(`/market/macro?ticker=${encodeURIComponent(ticker)}`),
         ]);
 
-      if (analysisResult.status !== "fulfilled") throw analysisResult.reason;
-
       setData({
-        analysis: normalizeAnalysis(analysisResult.value || {}),
+        analysis: analysisResult.status === "fulfilled"
+          ? normalizeAnalysis(analysisResult.value || {})
+          : normalizeAnalysis({symbol: ticker, quote: {}, chart: [], decision: {action: "WAIT"}}),
         company: companyResult.status === "fulfilled" ? companyResult.value || {} : {},
         fundamental: fundamentalResult.status === "fulfilled" ? fundamentalResult.value || {} : {},
         tradePlan: planResult.status === "fulfilled" ? planResult.value || {} : {},
         news: newsResult.status === "fulfilled" ? newsResult.value || {} : {},
         macro: macroResult.status === "fulfilled" ? macroResult.value || {} : {},
       });
+      if (analysisResult.status !== "fulfilled") {
+        setError(analysisResult.reason?.message || `No market data returned for ${ticker}.`);
+      }
     } catch (e: any) {
       setError(e?.message || "Unable to load HaViQuant intelligence.");
     } finally {
@@ -422,19 +425,20 @@ export default function App() {
 
         {loading ? (
           <Loading label="Loading V26.2 intelligence..." />
-        ) : error ? (
-          <ErrorBox error={error} retry={reload} />
         ) : (
-          <PageContent
-            data={data}
-            page={page}
-            setPage={setPage}
-            setTimeframe={setTimeframe}
-            ticker={ticker}
-            timeframe={timeframe}
-            token={token}
-            setToken={setToken}
-          />
+          <>
+            {error ? <ErrorBox error={error} retry={reload} /> : null}
+            <PageContent
+              data={data}
+              page={page}
+              setPage={setPage}
+              setTimeframe={setTimeframe}
+              ticker={ticker}
+              timeframe={timeframe}
+              token={token}
+              setToken={setToken}
+            />
+          </>
         )}
       </ScrollView>
       <MobileBottomNav page={page} setPage={setPage} />
