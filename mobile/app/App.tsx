@@ -23,11 +23,14 @@ type Page =
   | "Fundamentals"
   | "Technical"
   | "Decision"
+  | "Scanner"
+  | "Alerts"
   | "Evidence Research"
   | "Portfolio"
   | "Risk"
   | "Backtesting"
-  | "News";
+  | "News"
+  | "More";
 
 const API = (
   process.env.EXPO_PUBLIC_API_URL || "https://haviquant-1.onrender.com/api/v1"
@@ -40,12 +43,26 @@ const NAV: {id: Page; icon: keyof typeof Ionicons.glyphMap}[] = [
   {id: "Fundamentals", icon: "bar-chart-outline"},
   {id: "Technical", icon: "pulse-outline"},
   {id: "Decision", icon: "flash-outline"},
+  {id: "Scanner", icon: "scan-outline"},
+  {id: "Alerts", icon: "notifications-outline"},
   {id: "Evidence Research", icon: "flask-outline"},
   {id: "Portfolio", icon: "wallet-outline"},
   {id: "Risk", icon: "shield-checkmark-outline"},
   {id: "Backtesting", icon: "analytics-outline"},
   {id: "News", icon: "newspaper-outline"},
 ];
+
+const BOTTOM_NAV: {id: Page; label: string; icon: keyof typeof Ionicons.glyphMap}[] = [
+  {id: "Dashboard", label: "Home", icon: "home-outline"},
+  {id: "Scanner", label: "Scanner", icon: "scan-outline"},
+  {id: "Alerts", label: "Alerts", icon: "notifications-outline"},
+  {id: "Portfolio", label: "Portfolio", icon: "wallet-outline"},
+  {id: "More", label: "More", icon: "ellipsis-horizontal-outline"},
+];
+
+const SECTORS = ["All", "AI / Semiconductors", "Software / Cloud", "Biotech / Healthcare", "Space / Defense", "Energy", "Financials"];
+const SCAN_TRIGGERS = ["Top 10 new rank", "Score > 75", "BUY / STRONG BUY", "Upside > 5%", "Fresh catalyst", "Volume spike", "Policy impact"];
+const ALERT_INTERVALS = ["5 min", "15 min", "30 min", "1 hour", "Market open"];
 
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"] as const;
 type Timeframe = typeof TIMEFRAME_OPTIONS[number];
@@ -395,15 +412,6 @@ export default function App() {
         </View>
         <EventStrip />
 
-        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.nav} contentContainerStyle={styles.navContent}>
-          {NAV.map((item) => (
-            <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={[styles.navItem, page === item.id && styles.navItemActive]}>
-              <Ionicons name={item.icon} size={16} color={page === item.id ? "#58d7ff" : "#8094ad"} />
-              <Text style={[styles.navText, page === item.id && styles.navTextActive]}>{item.id}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-
         <View style={styles.pageHead}>
           <Text style={styles.pageTitle}>{page}</Text>
           <TouchableOpacity onPress={reload} style={styles.refresh}>
@@ -429,7 +437,29 @@ export default function App() {
           />
         )}
       </ScrollView>
+      <MobileBottomNav page={page} setPage={setPage} />
     </SafeAreaView>
+  );
+}
+
+function MobileBottomNav({page, setPage}: {page: Page; setPage: (page: Page) => void}) {
+  return (
+    <View style={styles.bottomNav}>
+      {BOTTOM_NAV.map((item) => {
+        const active = page === item.id || (item.id === "Dashboard" && page === "Stock Analysis");
+        return (
+          <TouchableOpacity
+            accessibilityLabel={`Open ${item.label}`}
+            key={item.id}
+            onPress={() => setPage(item.id)}
+            style={[styles.bottomNavItem, active && styles.bottomNavItemActive]}
+          >
+            <Ionicons name={item.icon} size={19} color={active ? "#74e6ff" : "#7c90a8"} />
+            <Text style={[styles.bottomNavText, active && styles.bottomNavTextActive]}>{item.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   );
 }
 
@@ -856,10 +886,13 @@ function PageContent({
   if (page === "Fundamentals") return <FundamentalsPage company={company} fundamental={fundamental} ticker={ticker} />;
   if (page === "Technical") return <TechnicalPage analysis={analysis} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />;
   if (page === "Decision") return <DecisionPage analysis={analysis} tradePlan={tradePlan} ticker={ticker} />;
+  if (page === "Scanner") return <ScannerPage ticker={ticker} />;
+  if (page === "Alerts") return <AlertsPage analysis={analysis} news={news} ticker={ticker} />;
   if (page === "Evidence Research") return <ResearchPage macro={macro} news={news} ticker={ticker} />;
   if (page === "Portfolio") return <AuthPortfolio token={token} setToken={setToken} />;
   if (page === "Risk") return <RiskPage token={token} />;
   if (page === "Backtesting") return <BacktestingPage analysis={analysis} macro={macro} ticker={ticker} />;
+  if (page === "More") return <MorePage setPage={setPage} />;
   return <NewsPage news={news} ticker={ticker} />;
 }
 
@@ -1086,6 +1119,197 @@ function TopMoversPanel() {
       </View>
     </Panel>
   );
+}
+
+function ScannerPage({ticker}: {ticker: string}) {
+  const [sector, setSector] = useState(SECTORS[0]);
+  const [trigger, setTrigger] = useState(SCAN_TRIGGERS[1]);
+  const [interval, setInterval] = useState(ALERT_INTERVALS[1]);
+  const rows = scannerRows(sector, ticker);
+
+  return (
+    <>
+      <Hero
+        ticker="Trade Scanner"
+        badge="TOP 50 OPPORTUNITY ALERTS"
+        name="Create scanner alerts by sector, upside threshold, catalysts, policy impact, and technical confirmation."
+      />
+      <Panel title="Scanner Alert Setup">
+        <Text style={styles.sectionLabel}>Sector scope</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {SECTORS.map((item) => (
+            <TouchableOpacity key={item} onPress={() => setSector(item)} style={[styles.filterChip, sector === item && styles.filterChipActive]}>
+              <Text style={[styles.filterChipText, sector === item && styles.filterChipTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={styles.sectionLabel}>Alert trigger</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+          {SCAN_TRIGGERS.map((item) => (
+            <TouchableOpacity key={item} onPress={() => setTrigger(item)} style={[styles.filterChip, trigger === item && styles.filterChipActive]}>
+              <Text style={[styles.filterChipText, trigger === item && styles.filterChipTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <Text style={styles.sectionLabel}>Check every</Text>
+        <View style={styles.segmentGrid}>
+          {ALERT_INTERVALS.map((item) => (
+            <TouchableOpacity key={item} onPress={() => setInterval(item)} style={[styles.segmentButton, interval === item && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, interval === item && styles.segmentTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <View style={styles.alertSummary}>
+          <Ionicons name="notifications-outline" size={18} color="#74e6ff" />
+          <Text style={styles.alertSummaryText}>
+            Notify when {sector === "All" ? "any sector" : sector} produces {trigger.toLowerCase()} during a {interval} scan.
+          </Text>
+        </View>
+      </Panel>
+      <Panel title="Current Top Candidates">
+        {rows.map((row, index) => (
+          <View key={row.symbol} style={styles.scanRow}>
+            <View style={styles.rankBubble}><Text style={styles.rankText}>{index + 1}</Text></View>
+            <View style={styles.scanBody}>
+              <View style={styles.scanHead}>
+                <Text style={styles.scanSymbol}>{row.symbol}</Text>
+                <Text style={styles.scanScore}>{row.score}/100</Text>
+              </View>
+              <Text style={styles.scanReason}>{row.reason}</Text>
+              <View style={styles.scanMetaRow}>
+                <Text style={styles.scanMeta}>Upside {row.upside}</Text>
+                <Text style={styles.scanMeta}>{row.timeframe}</Text>
+                <Text style={styles.scanMeta}>{row.catalyst}</Text>
+              </View>
+            </View>
+          </View>
+        ))}
+      </Panel>
+    </>
+  );
+}
+
+function AlertsPage({analysis, news, ticker}: {analysis: AnyRecord; news: AnyRecord; ticker: string}) {
+  const [portfolioOn, setPortfolioOn] = useState(true);
+  const [scannerOn, setScannerOn] = useState(true);
+  const [portfolioInterval, setPortfolioInterval] = useState(ALERT_INTERVALS[2]);
+  const [scannerInterval, setScannerInterval] = useState(ALERT_INTERVALS[1]);
+  const signal = text(analysis.decision?.action || analysis.signal || "WAIT");
+  const change = Number(analysis.quote?.change_pct);
+  const headlines = arr(first(news.items, news.news, news.articles)).slice(0, 2);
+
+  return (
+    <>
+      <Hero
+        ticker="Alerts"
+        badge="PORTFOLIO + SCANNER MONITOR"
+        name="Control how often the app checks your portfolio, world news, scanner ranks, technicals, and market-impact events."
+      />
+      <Panel title="Portfolio Monitor">
+        <ToggleRow enabled={portfolioOn} label="Portfolio news and analysis timer" onPress={() => setPortfolioOn(!portfolioOn)} value={portfolioOn ? "ON" : "OFF"} />
+        <View style={styles.segmentGrid}>
+          {ALERT_INTERVALS.map((item) => (
+            <TouchableOpacity key={item} onPress={() => setPortfolioInterval(item)} style={[styles.segmentButton, portfolioInterval === item && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, portfolioInterval === item && styles.segmentTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.longText}>
+          When holdings are added to Portfolio, the app can re-check news sentiment, catalysts, risk, chart setup, and decision changes on this schedule.
+        </Text>
+      </Panel>
+      <Panel title="Trade Scanner Alerts">
+        <ToggleRow enabled={scannerOn} label="Top 50 scanner alert rules" onPress={() => setScannerOn(!scannerOn)} value={scannerOn ? "ON" : "OFF"} />
+        <View style={styles.segmentGrid}>
+          {ALERT_INTERVALS.map((item) => (
+            <TouchableOpacity key={item} onPress={() => setScannerInterval(item)} style={[styles.segmentButton, scannerInterval === item && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, scannerInterval === item && styles.segmentTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {["New stock enters Top 10", "Score moves above 75", "Decision upgrades to BUY", "Estimated upside above 5%", "Fresh catalyst headline"].map((item) => (
+          <View key={item} style={styles.ruleRow}>
+            <Ionicons name="checkmark-circle-outline" size={17} color="#33e68a" />
+            <Text style={styles.ruleText}>{item}</Text>
+          </View>
+        ))}
+      </Panel>
+      <Panel title="Live Alert Preview">
+        <View style={styles.alertEvent}>
+          <View style={[styles.alertDot, signal.includes("BUY") && styles.alertDotGood]} />
+          <View style={styles.alertEventBody}>
+            <Text style={styles.alertEventTitle}>{ticker} decision is {signal}</Text>
+            <Text style={styles.alertEventText}>
+              Price {money(analysis.quote?.price)} · {Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "change not returned"} · check every {portfolioInterval}
+            </Text>
+          </View>
+        </View>
+        {headlines.map((item, index) => (
+          <View key={`${text(item.title)}-${index}`} style={styles.alertEvent}>
+            <View style={styles.alertDot} />
+            <View style={styles.alertEventBody}>
+              <Text numberOfLines={2} style={styles.alertEventTitle}>{text(first(item.title, item.headline))}</Text>
+              <Text style={styles.alertEventText}>News sentiment and catalyst scan queued for portfolio impact.</Text>
+            </View>
+          </View>
+        ))}
+      </Panel>
+    </>
+  );
+}
+
+function ToggleRow({enabled, label, onPress, value}: {enabled: boolean; label: string; onPress: () => void; value: string}) {
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.toggleRow}>
+      <View style={styles.toggleTextGroup}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        <Text style={styles.toggleSub}>Tap to change alert state</Text>
+      </View>
+      <View style={[styles.togglePill, enabled && styles.togglePillActive]}>
+        <View style={[styles.toggleKnob, enabled && styles.toggleKnobActive]} />
+      </View>
+      <Text style={styles.toggleValue}>{value}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function MorePage({setPage}: {setPage: (page: Page) => void}) {
+  const pages = NAV.filter((item) => !["Dashboard", "Scanner", "Alerts", "Portfolio"].includes(item.id));
+  return (
+    <>
+      <Hero ticker="More" badge="RESEARCH WORKSPACE" name="Open the deeper company, technical, decision, risk, backtesting, and news views." />
+      <View style={styles.moreGrid}>
+        {pages.map((item) => (
+          <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={styles.moreTile}>
+            <Ionicons name={item.icon} size={19} color="#74e6ff" />
+            <Text style={styles.moreTitle}>{item.id}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </>
+  );
+}
+
+function scannerRows(sector: string, ticker: string) {
+  const universe = sector === "Biotech / Healthcare"
+    ? ["MRNA", "LLY", "NVO", "VRTX", "REGN"]
+    : sector === "Space / Defense"
+      ? ["LMT", "RTX", "NOC", "BA", "RKLB"]
+      : sector === "Energy"
+        ? ["XOM", "CVX", "OXY", "URA", "CCJ"]
+        : sector === "Financials"
+          ? ["JPM", "BAC", "GS", "HOOD", "COIN"]
+          : sector === "Software / Cloud"
+            ? ["NET", "CRWD", "PANW", "DDOG", "SNOW"]
+            : ["NVDA", "AMD", "AVGO", "TSLA", ticker];
+  return universe.map((symbol, index) => ({
+    symbol,
+    score: 86 - index * 4,
+    upside: `${(7.4 - index * 0.8).toFixed(1)}%`,
+    timeframe: index < 2 ? "1-5 sessions" : "1-3 weeks",
+    catalyst: index % 2 ? "policy/news" : "volume/catalyst",
+    reason: `${symbol} is being watched for fresh catalyst language, relative volume, price confirmation, and sector momentum before the move becomes crowded.`,
+  }));
 }
 
 function chartRows(rows: any[]) {
@@ -1724,7 +1948,32 @@ const styles = StyleSheet.create({
   navText: {color: "#8094ad", fontSize: 11, fontWeight: "800"},
   navTextActive: {color: "#58d7ff"},
   body: {flex: 1},
-  bodyContent: {flexGrow: 1, paddingBottom: 42, paddingHorizontal: 10},
+  bodyContent: {flexGrow: 1, paddingBottom: 100, paddingHorizontal: 10},
+  bottomNav: {
+    alignItems: "center",
+    backgroundColor: "#07111d",
+    borderTopColor: "#16283d",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: 6,
+    justifyContent: "space-around",
+    paddingBottom: 8,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+  },
+  bottomNavItem: {
+    alignItems: "center",
+    borderColor: "transparent",
+    borderRadius: 12,
+    borderWidth: 1,
+    flex: 1,
+    gap: 3,
+    minHeight: 54,
+    justifyContent: "center",
+  },
+  bottomNavItemActive: {backgroundColor: "#10233a", borderColor: "#245f7a"},
+  bottomNavText: {color: "#7c90a8", fontSize: 9, fontWeight: "800"},
+  bottomNavTextActive: {color: "#74e6ff"},
   pageHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 7, marginTop: 4},
   pageTitle: {color: "#eaf2ff", flex: 1, fontSize: 18, fontWeight: "900"},
   refresh: {alignItems: "center", borderColor: "#273b55", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 5, paddingHorizontal: 9, paddingVertical: 6},
@@ -1759,6 +2008,49 @@ const styles = StyleSheet.create({
   panelTitle: {color: "#e7f2ff", fontSize: 13, fontWeight: "900", marginBottom: 8},
   mobileMovers: {flexDirection: "row", flexWrap: "wrap", gap: 8},
   mobileMover: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#1a2d44", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, paddingVertical: 8},
+  sectionLabel: {color: "#7d93ad", fontSize: 10, fontWeight: "900", letterSpacing: 0.8, marginBottom: 7, marginTop: 4, textTransform: "uppercase"},
+  chipRow: {gap: 7, paddingBottom: 8},
+  filterChip: {backgroundColor: "#07111d", borderColor: "#20334b", borderRadius: 999, borderWidth: 1, paddingHorizontal: 11, paddingVertical: 8},
+  filterChipActive: {backgroundColor: "#10334d", borderColor: "#2a9ac0"},
+  filterChipText: {color: "#8ea2ba", fontSize: 11, fontWeight: "800"},
+  filterChipTextActive: {color: "#74e6ff"},
+  segmentGrid: {flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 9},
+  segmentButton: {backgroundColor: "#07111d", borderColor: "#1b3048", borderRadius: 9, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 8},
+  segmentButtonActive: {backgroundColor: "#122f45", borderColor: "#2a9ac0"},
+  segmentText: {color: "#879bb3", fontSize: 11, fontWeight: "800"},
+  segmentTextActive: {color: "#80e6ff"},
+  alertSummary: {alignItems: "flex-start", backgroundColor: "#071522", borderColor: "#1c3f55", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 9, marginTop: 4, padding: 10},
+  alertSummaryText: {color: "#b8c9dc", flex: 1, fontSize: 11, lineHeight: 17},
+  scanRow: {alignItems: "flex-start", borderBottomColor: "#17283d", borderBottomWidth: 1, flexDirection: "row", gap: 10, paddingVertical: 11},
+  rankBubble: {alignItems: "center", backgroundColor: "#10233a", borderColor: "#235b75", borderRadius: 9, borderWidth: 1, height: 30, justifyContent: "center", width: 30},
+  rankText: {color: "#74e6ff", fontSize: 11, fontWeight: "900"},
+  scanBody: {flex: 1, minWidth: 0},
+  scanHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between"},
+  scanSymbol: {color: "#edf5ff", fontSize: 15, fontWeight: "900"},
+  scanScore: {color: "#2fed86", fontSize: 13, fontWeight: "900"},
+  scanReason: {color: "#98abc2", fontSize: 11, lineHeight: 17, marginTop: 4},
+  scanMetaRow: {flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 7},
+  scanMeta: {backgroundColor: "#081929", borderColor: "#1d334d", borderRadius: 999, borderWidth: 1, color: "#9fc1da", fontSize: 9, fontWeight: "800", overflow: "hidden", paddingHorizontal: 8, paddingVertical: 4},
+  toggleRow: {alignItems: "center", backgroundColor: "#071522", borderColor: "#1b3048", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 10, marginBottom: 10, padding: 10},
+  toggleTextGroup: {flex: 1, minWidth: 0},
+  toggleLabel: {color: "#e9f3ff", fontSize: 12, fontWeight: "900"},
+  toggleSub: {color: "#7187a1", fontSize: 9, marginTop: 2},
+  togglePill: {backgroundColor: "#202b39", borderRadius: 999, height: 24, padding: 3, width: 43},
+  togglePillActive: {backgroundColor: "#143e2e"},
+  toggleKnob: {backgroundColor: "#8191a4", borderRadius: 99, height: 18, width: 18},
+  toggleKnobActive: {backgroundColor: "#34e889", marginLeft: 19},
+  toggleValue: {color: "#9fb2c8", fontSize: 10, fontWeight: "900", width: 28},
+  ruleRow: {alignItems: "center", borderTopColor: "#17283d", borderTopWidth: 1, flexDirection: "row", gap: 8, paddingVertical: 8},
+  ruleText: {color: "#b8c9dc", flex: 1, fontSize: 11, fontWeight: "700"},
+  alertEvent: {alignItems: "flex-start", borderBottomColor: "#17283d", borderBottomWidth: 1, flexDirection: "row", gap: 9, paddingVertical: 10},
+  alertDot: {backgroundColor: "#ffcc4d", borderRadius: 99, height: 10, marginTop: 4, width: 10},
+  alertDotGood: {backgroundColor: "#32e881"},
+  alertEventBody: {flex: 1, minWidth: 0},
+  alertEventTitle: {color: "#edf5ff", fontSize: 12, fontWeight: "900", lineHeight: 17},
+  alertEventText: {color: "#8ea2ba", fontSize: 10, lineHeight: 15, marginTop: 2},
+  moreGrid: {flexDirection: "row", flexWrap: "wrap", gap: 9},
+  moreTile: {alignItems: "center", backgroundColor: "#0b1725", borderColor: "#1a2d44", borderRadius: 10, borderWidth: 1, flexDirection: "row", gap: 9, minHeight: 56, padding: 12, width: "48%"},
+  moreTitle: {color: "#dceaff", flex: 1, fontSize: 12, fontWeight: "900"},
   setupHead: {alignItems: "flex-start", flexDirection: "row", justifyContent: "space-between", marginBottom: 6},
   setupSignal: {color: "#43e778", fontSize: 14, fontWeight: "900"},
   setupSub: {color: "#74e6ae", fontSize: 10, marginTop: 2},
