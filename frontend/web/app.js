@@ -109,6 +109,35 @@ const TICKER_ALIASES = {
   APPLE: "AAPL",
   AMAZON: "AMZN",
 };
+const SCAN_UNIVERSE = [
+  "SPCX", "NVDA", "AMD", "AVGO", "TSLA", "META", "MSFT", "AAPL", "AMZN", "GOOGL", "NFLX",
+  "PLTR", "SMCI", "ARM", "MU", "TSM", "MRNA", "PFE", "LLY", "NVO", "UNH",
+  "JPM", "GS", "COIN", "MARA", "RIOT", "HOOD", "SOFI", "RIVN", "LCID", "CCL",
+  "NCLH", "BA", "GE", "XOM", "CVX", "OXY", "URA", "CCJ", "AI", "SNOW",
+  "CRWD", "PANW", "NET", "DDOG", "SHOP", "UBER", "ABNB", "ROKU", "RBLX", "IONQ",
+  "APP", "AFRM", "UPST", "MSTR", "BABA", "PDD", "SE", "MELI", "CELH", "ELF",
+  "DKNG", "PINS", "SNAP", "SQ", "PYPL", "INTC", "QCOM", "ORCL", "NOW", "CRM",
+  "VRTX", "REGN", "BIIB", "GILD", "BMY", "MRK", "ISRG", "TMO", "DHR", "GEHC",
+  "LMT", "RTX", "NOC", "CAT", "DE", "FCX", "NEM", "SLV", "GLD", "TLT",
+  "IWM", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV", "XME",
+];
+const SECTOR_UNIVERSES = {
+  "AI / Semiconductors": ["NVDA", "AMD", "AVGO", "ARM", "MU", "TSM", "SMCI", "QCOM", "INTC", "ORCL"],
+  "Software / Cloud": ["MSFT", "GOOGL", "META", "SNOW", "CRWD", "PANW", "NET", "DDOG", "NOW", "CRM"],
+  "Biotech / Healthcare": ["MRNA", "PFE", "LLY", "NVO", "UNH", "VRTX", "REGN", "BIIB", "GILD", "BMY", "MRK", "ISRG"],
+  "Space / Defense": ["SPCX", "RKLB", "BA", "LMT", "RTX", "NOC", "GE", "GEHC"],
+  "EV / Mobility": ["TSLA", "RIVN", "LCID", "UBER", "ABNB", "CCL", "NCLH"],
+  "Crypto / Fintech": ["COIN", "MARA", "RIOT", "HOOD", "SOFI", "AFRM", "UPST", "PYPL", "MSTR"],
+  "Energy / Commodities": ["XOM", "CVX", "OXY", "URA", "CCJ", "FCX", "NEM", "SLV", "GLD", "XLE", "XME"],
+  "Consumer / Internet": ["AMZN", "NFLX", "SHOP", "ROKU", "RBLX", "BABA", "PDD", "SE", "MELI", "CELH", "ELF", "DKNG", "PINS", "SNAP"],
+  Financials: ["JPM", "GS", "XLF", "SQ", "PYPL", "HOOD", "SOFI"],
+  "ETFs / Macro": ["SPY", "QQQ", "IWM", "TLT", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV"],
+};
+const GEOPOLITICS_FALLBACK = [
+  {theme: "Tariffs / Trade Policy", heat: 35, direction: "Watch", benefiting_sectors: ["domestic industrials", "materials", "defense supply chain"], pressured_sectors: ["retail importers", "hardware margins", "global autos"], stocks_to_watch: ["CAT", "DE", "XME", "FCX", "AAPL", "TSLA", "XLY"], why: "Live policy endpoint is not available in production yet. Use this as a watchlist only until linked article proof is returned.", policy_details: []},
+  {theme: "Defense / Global Conflict", heat: 35, direction: "Watch", benefiting_sectors: ["defense", "aerospace", "cybersecurity"], pressured_sectors: ["airlines", "travel", "risk assets"], stocks_to_watch: ["LMT", "RTX", "NOC", "BA", "PANW", "CRWD", "CCL", "NCLH"], why: "Live policy endpoint is not available in production yet. Confirm with official releases and source articles before trading.", policy_details: []},
+  {theme: "Technology Regulation / AI Policy", heat: 35, direction: "Watch", benefiting_sectors: ["approved AI infrastructure", "cybersecurity", "domestic semiconductors"], pressured_sectors: ["restricted chip exports", "high multiple software"], stocks_to_watch: ["NVDA", "AMD", "AVGO", "TSM", "CRWD", "PANW", "NET", "XLK"], why: "Live policy endpoint is not available in production yet. Treat this as a monitoring panel, not a confirmed catalyst.", policy_details: []},
+];
 const money = (x) => {
   const n = Number(x);
   if (!Number.isFinite(n)) return "-";
@@ -129,6 +158,78 @@ async function api(path) {
   try { data = raw ? JSON.parse(raw) : null; } catch {}
   if (!r.ok) throw Error(data?.detail || raw || `${r.status} API request failed`);
   return data;
+}
+
+async function apiFirst(paths) {
+  let lastError = null;
+  for (const path of paths) {
+    try {
+      return await api(path);
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || Error("API request failed");
+}
+
+function scannerSymbolsForSector(sector) {
+  const selected = String(sector || "All");
+  return (selected === "All" ? SCAN_UNIVERSE : (SECTOR_UNIVERSES[selected] || SCAN_UNIVERSE)).slice(0, 50);
+}
+
+function fallbackScannerRow(analysis, newsItems) {
+  const ticker = analysis.ticker || "-";
+  const setup = Number(analysis.setup_quality || 0);
+  const change = Number(analysis.change_pct || 0);
+  const volume = Number(analysis.volume_ratio || 0);
+  const catalystScore = newsItems.length ? Math.min(24, newsItems.length * 4) : 0;
+  const score = Math.max(0, Math.min(100, setup * .72 + catalystScore + Math.max(0, change) * .8 + Math.min(10, volume * 2)));
+  const upside = Math.max(1.5, Math.min(12, 2.5 + Math.max(0, score - 55) / 9));
+  const price = Number(analysis.price);
+  return {
+    ticker,
+    score: Number(score.toFixed(1)),
+    signal: analysis.signal || "WATCH",
+    trend: analysis.trend || "-",
+    momentum: analysis.momentum || "-",
+    price: Number.isFinite(price) ? price : null,
+    change_pct: Number.isFinite(change) ? change : null,
+    volume_ratio: Number.isFinite(volume) ? volume : null,
+    estimated_upside_pct: Number(upside.toFixed(1)),
+    estimated_target_price: Number.isFinite(price) ? Number((price * (1 + upside / 100)).toFixed(2)) : null,
+    estimated_bullish_timeframe: setup >= 70 ? "1-5 trading days after volume confirmation" : setup >= 50 ? "1-3 weeks if price confirms breakout" : "No bullish timeframe yet; wait for confirmation",
+    upside_thesis: `${ticker} is ranked from live production analysis because the setup score is ${setup}/100 with ${analysis.trend || "mixed"} trend and ${analysis.momentum || "neutral"} momentum.`,
+    confirmation: ["Break above resistance or prior day high", "Volume expansion above recent average", "Fresh positive source or company event confirmation"],
+    risk_watch: ["Backend scanner route is unavailable, so this row uses production fallback ranking", "Do not trade without confirming price, volume, and source news"],
+    why: [`Production fallback scan from live ${ticker} analysis`, newsItems[0]?.title ? `Latest headline: ${newsItems[0].title}` : "No fresh headline returned"],
+    articles: newsItems.slice(0, 3).map((x) => ({title: x.title || x.headline, publisher: x.publisher || x.source, url: x.url || x.link, sentiment: x.sentiment})),
+    next_announcement_watch: {summary: newsItems[0]?.title || "Watch next company filing, earnings, product update, or analyst revision."},
+    product_progress_watch: "Track product launches, contracts, production updates, regulatory milestones, and management guidance.",
+  };
+}
+
+async function fallbackTradeScanner() {
+  const symbols = scannerSymbolsForSector(state.scannerSector);
+  const rows = [];
+  for (let i = 0; i < symbols.length; i += 8) {
+    const batch = symbols.slice(i, i + 8);
+    const results = await Promise.allSettled(batch.map(async (ticker) => {
+      const analysis = await api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=60d&interval=5m`);
+      let newsData = {items: []};
+      try {
+        newsData = await apiFirst([`/market/news?ticker=${encodeURIComponent(ticker)}`, `/news/${encodeURIComponent(ticker)}?limit=6`]);
+      } catch {}
+      return fallbackScannerRow(analysis, arr(newsData.items || newsData));
+    }));
+    results.forEach((result, idx) => {
+      if (result.status === "fulfilled") rows.push(result.value);
+      else rows.push({ticker: batch[idx], score: 0, signal: "WATCH", why: [`Fallback scan failed: ${result.reason?.message || "No data"}`], articles: [], risk_watch: ["No production data returned for this symbol"]});
+    });
+    state.scanner = {sector: state.scannerSector, universe_size: symbols.length, items: rows.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50), fallback: true};
+    renderContent();
+  }
+  rows.sort((a, b) => (b.score || 0) - (a.score || 0));
+  return {updated_at: new Date().toISOString(), sector: state.scannerSector, sectors: ["All", ...Object.keys(SECTOR_UNIVERSES)], universe_size: symbols.length, items: rows.slice(0, 50), method: "Production fallback ranks existing live analysis plus available news.", disclaimer: "Research signal only. This does not guarantee that the stock price will rise.", fallback: true};
 }
 
 function icon(name) {
@@ -823,7 +924,11 @@ async function runScanner() {
   state.scannerError = "";
   renderContent();
   try {
-    state.scanner = await api(`/market/trade-scanner?limit=50&sector=${encodeURIComponent(state.scannerSector)}`);
+    try {
+      state.scanner = await api(`/market/trade-scanner?limit=50&sector=${encodeURIComponent(state.scannerSector)}`);
+    } catch {
+      state.scanner = await fallbackTradeScanner();
+    }
   } catch (e) {
     state.scannerError = e.message || "Unable to scan trade opportunities.";
   } finally {
@@ -837,7 +942,11 @@ async function runGeopolitics() {
   state.geopoliticalError = "";
   renderContent();
   try {
-    state.geopolitical = await api("/market/geopolitics?limit=8");
+    try {
+      state.geopolitical = await api("/market/geopolitics?limit=8");
+    } catch {
+      state.geopolitical = {items: GEOPOLITICS_FALLBACK, fallback: true};
+    }
   } catch (e) {
     state.geopoliticalError = e.message || "Unable to scan geopolitical policy impact.";
   } finally {
