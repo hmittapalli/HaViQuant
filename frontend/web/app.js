@@ -295,6 +295,7 @@ function shell() {
         ${topMovers()}
       </main>
     </div>
+    <div id="stockTooltip" class="stock-tooltip"></div>
     ${state.calendarOpen ? calendarModal() : ""}`;
 
   $$("[data-nav]").forEach((b) => b.onclick = () => { state.page = b.dataset.nav; shell(); renderContent(); });
@@ -302,6 +303,11 @@ function shell() {
   $("#tickerInput").oninput = (e) => state.query = e.target.value.toUpperCase();
   $("#tickerInput").onkeydown = (e) => { if (e.key === "Enter") load(e.target.value); };
   $$("[data-mover]").forEach((b) => b.onclick = () => load(b.dataset.mover));
+  $$("[data-mover]").forEach((b) => {
+    b.onmouseenter = () => showStockTooltip(b);
+    b.onmousemove = () => showStockTooltip(b);
+    b.onmouseleave = hideStockTooltip;
+  });
   bindGlobalControls();
 }
 
@@ -320,7 +326,7 @@ function marketTape() {
 
 function events() {
   return `<button class="event-intro" data-open-calendar="1">Impact Calendar<br><small>${esc(todayLabel())}</small></button>${EVENTS.slice(0, 4).map((event) => `
-    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${event.level}</b><span>${esc(event.title.replace("{ticker}", state.ticker))}</span><em>${esc(eventDateLabel(event))}</em></div><small>${esc(event.time)}<br>${esc(eventEta(event))}</small></button>`).join("")}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
+    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${event.level}</b><span>${esc(event.title.replace("{ticker}", state.ticker))}</span><em>${esc(eventDateLabel(event))}</em></div><small><strong>${esc(event.time)}</strong><em>${esc(eventEta(event))}</em></small></button>`).join("")}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
 }
 
 function topMovers() {
@@ -337,7 +343,24 @@ function moverIcon(symbol) {
 
 function moverTooltip(symbol, index) {
   const names = {NVDA: "NVIDIA", AMD: "Advanced Micro Devices", AVGO: "Broadcom", TSLA: "Tesla", META: "Meta Platforms", INTC: "Intel", CCL: "Carnival", NFLX: "Netflix", QQQ: "Invesco QQQ", SPY: "SPDR S&P 500"};
-  return `${names[symbol] || symbol} | ${index > 5 ? "Loser" : "Gainer"} | Click to load ${symbol}`;
+  const sectors = {NVDA: "AI chips", AMD: "Semiconductors", AVGO: "Chips / infrastructure", TSLA: "EV / autonomy", META: "Social / AI", INTC: "Semiconductors", CCL: "Cruise travel", NFLX: "Streaming", QQQ: "Nasdaq ETF", SPY: "S&P 500 ETF"};
+  const move = index > 5 ? "-1.85%" : `+${(2.02 + index * .22).toFixed(2)}%`;
+  return `${symbol} - ${names[symbol] || symbol}\nMove: ${move} (${index > 5 ? "lagging" : "gainer"})\nFocus: ${sectors[symbol] || "Market mover"}\nClick to load full analysis`;
+}
+
+function showStockTooltip(button) {
+  const tip = $("#stockTooltip");
+  if (!tip) return;
+  const rect = button.getBoundingClientRect();
+  tip.textContent = button.dataset.tooltip || "";
+  tip.style.left = `${Math.min(window.innerWidth - 260, Math.max(12, rect.left + rect.width / 2 - 120))}px`;
+  tip.style.top = `${Math.max(12, rect.top - 104)}px`;
+  tip.classList.add("show");
+}
+
+function hideStockTooltip() {
+  const tip = $("#stockTooltip");
+  if (tip) tip.classList.remove("show");
 }
 
 function bindGlobalControls() {

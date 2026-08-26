@@ -51,7 +51,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   color: white;
   font-weight: 950;
 }
-.brand strong { display: block; font-size: 24px; line-height: 1; }
+.brand strong { display: block; font-size: 21px; line-height: 1; }
 .brand em { color: #9b62ff; font-style: normal; }
 .brand small { display: block; color: #aab9c9; font-size: 11px; margin-top: 4px; }
 
@@ -65,8 +65,9 @@ nav button {
   border-radius: 7px;
   background: transparent;
   color: #c6d4e3;
+  font-size: 14px;
   font-weight: 800;
-  padding: 10px 12px;
+  padding: 9px 11px;
   text-align: left;
 }
 nav button:hover { background: #0d1828; color: white; }
@@ -175,12 +176,12 @@ nav button.active {
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 8px 16px;
+  padding: 7px 16px;
   border-bottom: 1px solid #132338;
   background: #08131f;
 }
 .event-intro, .event-card {
-  height: 50px;
+  height: 56px;
   border: 1px solid #1c3047;
   border-radius: 7px;
   background: #0a1726;
@@ -193,19 +194,20 @@ nav button.active {
   width: 220px;
   color: #eef5ff;
   font-weight: 900;
+  font-size: 16px;
   line-height: 1.1;
   text-align: left;
 }
 .event-intro small {
   color: #8ea2b9;
-  font-size: 11px;
+  font-size: 10px;
   margin-top: 4px;
 }
 .event-card {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) 68px;
+  grid-template-columns: 10px minmax(0, 1fr) 74px;
   align-items: center;
-  width: 250px;
+  width: 265px;
   min-width: 0;
   gap: 8px;
   text-align: left;
@@ -253,14 +255,29 @@ nav button.active {
   margin-top: 2px;
 }
 .event-card small {
+  display: grid;
+  align-content: center;
+  gap: 2px;
   color: #8ca1b8;
   font-size: 10px;
   line-height: 1.18;
   text-align: right;
   white-space: normal;
 }
+.event-card small strong {
+  color: #a9bacb;
+  font-size: 10px;
+  line-height: 1.1;
+}
+.event-card small em {
+  color: #7f94ad;
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.1;
+  margin: 0;
+}
 .calendar-btn {
-  height: 50px;
+  height: 56px;
   min-width: 132px;
   margin-left: 0;
   flex-shrink: 0;
@@ -705,13 +722,13 @@ nav button.active {
   display: block;
   margin-top: 8px;
   color: #eef5ff;
-  font-size: 23px;
+  font-size: 20px;
 }
 .module-hero {
   border: 1px solid #1b4963;
   border-radius: 9px;
   background: #092031;
-  padding: 22px;
+  padding: 18px 20px;
   margin-bottom: 12px;
 }
 .module-hero span {
@@ -726,13 +743,14 @@ nav button.active {
   font-weight: 950;
 }
 .module-hero h1 {
-  margin: 15px 0 0;
-  font-size: 42px;
+  margin: 12px 0 0;
+  font-size: 34px;
 }
 .module-hero p {
   max-width: 860px;
   color: #9db1c7;
-  line-height: 1.55;
+  line-height: 1.45;
+  font-size: 14px;
   margin: 10px 0 0;
 }
 .decision-hero h1 { color: #20e188; }
@@ -1228,7 +1246,8 @@ nav button.active {
   align-items: center;
   gap: 10px;
   min-height: 48px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: visible;
   border-top: 1px solid #132338;
   background: #08131f;
   padding: 8px 16px;
@@ -1237,7 +1256,8 @@ nav button.active {
   color: #61aaff;
   border: 1px solid #19304a;
   border-radius: 7px;
-  padding: 10px 14px;
+  padding: 8px 12px;
+  font-size: 14px;
 }
 .movers button {
   position: relative;
@@ -1245,7 +1265,8 @@ nav button.active {
   border-radius: 7px;
   background: #0a1726;
   color: #dce8f4;
-  padding: 9px 12px;
+  padding: 8px 11px;
+  font-size: 14px;
   flex-shrink: 0;
 }
 .movers button.active, .movers button:hover { border-color: #235f7c; background: #10233a; }
@@ -1253,29 +1274,11 @@ nav button.active {
   transform: translateY(-2px);
   box-shadow: 0 10px 24px #0005;
 }
-.mover:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 10px);
-  transform: translateX(-50%);
-  z-index: 20;
-  min-width: 190px;
-  border: 1px solid #2c5875;
-  border-radius: 7px;
-  background: #07111d;
-  color: #dce8f4;
-  padding: 8px 10px;
-  font-size: 11px;
-  font-weight: 800;
-  white-space: nowrap;
-  box-shadow: 0 12px 28px #0008;
-}
 .mover i {
   display: inline-grid;
   place-items: center;
-  width: 26px;
-  height: 24px;
+  width: 24px;
+  height: 22px;
   margin-right: 8px;
   border: 1px solid #20405e;
   border-radius: 6px;
@@ -1292,6 +1295,24 @@ nav button.active {
 }
 .mover span { font-weight: 900; margin-right: 8px; }
 .mover em { font-style: normal; font-weight: 900; }
+.stock-tooltip {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  width: 240px;
+  border: 1px solid #2c5875;
+  border-radius: 7px;
+  background: #07111d;
+  color: #dce8f4;
+  padding: 9px 11px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.45;
+  white-space: pre-line;
+  box-shadow: 0 14px 34px #0009;
+  pointer-events: none;
+}
+.stock-tooltip.show { display: block; }
 
 .modal-backdrop {
   position: fixed;
