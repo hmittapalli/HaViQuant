@@ -374,7 +374,7 @@ function useWorkspace(ticker: string, timeframe: Timeframe) {
       setData({
         analysis: analysisResult.status === "fulfilled"
           ? normalizeAnalysis(analysisResult.value || {})
-          : normalizeAnalysis({symbol: ticker, quote: {}, chart: [], decision: {action: "WAIT"}}),
+          : normalizeAnalysis({symbol: ticker, quote: {}, chart: []}),
         company: companyResult.status === "fulfilled" ? companyResult.value || {} : {},
         fundamental: fundamentalResult.status === "fulfilled" ? fundamentalResult.value || {} : {},
         tradePlan: planResult.status === "fulfilled" ? planResult.value || {} : {},
@@ -407,6 +407,7 @@ export default function App() {
   const [timeframe, setTimeframe] = useState<Timeframe>("5m");
   const {data, loading, error, reload} = useWorkspace(ticker, timeframe);
   const analysis = data.analysis || {};
+  const macro = data.macro || {};
 
   const submitTicker = () => {
     const clean = input.trim().toUpperCase();
@@ -489,7 +490,7 @@ export default function App() {
             <Ionicons name="trending-up-outline" size={17} color="#7de6ff" />
           </TouchableOpacity>
         </View>
-        <EventStrip />
+        <EventStrip macro={macro} />
 
         <View style={styles.pageHead}>
           <Text style={styles.pageTitle}>{page}</Text>
@@ -579,8 +580,11 @@ function DesktopTerminal({
   const analysis = data.analysis || {};
   const company = data.company || {};
   const fundamental = data.fundamental || {};
+  const macro = data.macro || {};
   const profile = company.profile || company || {};
-  const watch = ["NVDA", "AMD", "AVGO", "TSLA", "META", "INTC", "CCL"];
+  const watch = arr(first(data.watchlist, data.watch, data.movers, analysis.watchlist))
+    .map((item) => text(first(item.symbol, item.ticker, item)))
+    .filter((symbol) => symbol !== "Not returned");
 
   const chooseTicker = (symbol: string) => {
     setInput(symbol);
@@ -635,7 +639,7 @@ function DesktopTerminal({
             </TouchableOpacity>
           </View>
 
-          <EventStrip />
+          <EventStrip macro={macro} />
 
           {loading ? (
             <Loading label="Loading V26.2 intelligence..." />
@@ -656,10 +660,10 @@ function DesktopTerminal({
                   <DecisionPage analysis={analysis} tradePlan={data.tradePlan || {}} ticker={ticker} />
                 </View>
               </View>
-              <BottomMovers watch={watch} chooseTicker={chooseTicker} />
+              {watch.length ? <BottomMovers watch={watch} chooseTicker={chooseTicker} /> : null}
               <View style={styles.desktopLowerGrid}>
-                <ImpactCalendar />
-                <EventImpact ticker={ticker} />
+                <ImpactCalendar macro={macro} />
+                <EventImpact macro={macro} ticker={ticker} />
                 <Panel title="Multi-Timeframe Analysis">
                   <DataList title="Confluence" data={analysis.technical?.mtf} />
                 </Panel>
@@ -684,8 +688,8 @@ function DesktopQuoteHeader({analysis, profile, ticker}: {analysis: AnyRecord; p
     <View style={styles.desktopQuote}>
       <View style={styles.desktopQuoteIdentity}>
         <Text style={styles.desktopTicker}>{ticker}</Text>
-        <Text style={styles.desktopCompany}>{profile.name || "NVIDIA Corporation"}</Text>
-        <Text style={styles.desktopSector}>{first(profile.sector, "Technology")} • {first(profile.industry, "Semiconductors")}</Text>
+        <Text style={styles.desktopCompany}>{text(first(profile.name, profile.longName))}</Text>
+        <Text style={styles.desktopSector}>{text(profile.sector)} • {text(profile.industry)}</Text>
       </View>
       <View style={styles.desktopQuotePrice}>
         <Text style={styles.desktopPrice}>{money(analysis.quote?.price)}</Text>
@@ -696,7 +700,7 @@ function DesktopQuoteHeader({analysis, profile, ticker}: {analysis: AnyRecord; p
         {[
           ["Session Range", stats.range],
           ["Session Volume", stats.volume],
-          ["Market Cap", marketCapText(profile)],
+          ["Market Cap", marketCapText(profile, analysis.fundamental)],
         ].map(([label, value]) => (
           <View key={label} style={styles.desktopRangeCard}>
             <Text style={styles.cardLabel}>{label}</Text>
@@ -720,6 +724,17 @@ function DesktopChart({
   timeframe: Timeframe;
   setTimeframe: (timeframe: Timeframe) => void;
 }) {
+  const technical = analysis.technical || {};
+  const last = chartRows(rows).slice(-1)[0];
+  const indicators = [
+    ["SMA 20", money(first(technical.sma_20, technical.sma20))],
+    ["SMA 50", money(first(technical.sma_50, technical.sma50))],
+    ["SMA 200", money(first(technical.sma_200, technical.sma200))],
+    ["VWAP", money(technical.vwap)],
+    ["RSI", num(technical.rsi)],
+    ["Volume", compactNumber(last?.volume)],
+  ].filter(([, value]) => hasUsefulValue(value) && value !== "Not returned");
+
   return (
     <Panel title="Trading Chart">
       <View style={styles.desktopToolbar}>
@@ -731,9 +746,9 @@ function DesktopChart({
       </View>
       <View style={styles.candleArea}>
         <View style={styles.indicatorRail}>
-          {["EMA 9 944.21", "EMA 20 942.11", "EMA 50 939.27", "VWAP 943.65", "Volume 1.24M"].map((item) => (
-            <Text key={item} style={styles.indicatorText}>{item}</Text>
-          ))}
+          {indicators.length ? indicators.map(([label, value]) => (
+            <Text key={label} style={styles.indicatorText}>{label} {value}</Text>
+          )) : <Text style={styles.indicatorMuted}>Indicators not returned</Text>}
         </View>
         <CandleChart analysis={analysis} rows={rows} height={350} count={72} desktop />
       </View>
@@ -742,31 +757,64 @@ function DesktopChart({
   );
 }
 
-function ImpactCalendar() {
+function macroEvents(macro: AnyRecord) {
+  return arr(first(macro.events, macro.calendar, macro.economic_calendar, macro.impact_calendar, macro.items, macro.rows))
+    .filter(hasUsefulValue)
+    .slice(0, 12);
+}
+
+function eventTitle(event: AnyRecord) {
+  return text(first(event.title, event.name, event.event, event.label, event.description));
+}
+
+function eventLevel(event: AnyRecord) {
+  const raw = String(first(event.importance, event.impact, event.level, event.severity, "INFO")).toUpperCase();
+  if (raw.includes("HIGH")) return "HIGH";
+  if (raw.includes("MED")) return "MED";
+  if (raw.includes("LOW")) return "LOW";
+  return raw === "INFO" ? "INFO" : raw.slice(0, 12);
+}
+
+function eventTime(event: AnyRecord) {
+  return text(first(event.time, event.datetime, event.date_time, event.date, event.starts_at, event.released_at));
+}
+
+function ImpactCalendar({macro}: {macro: AnyRecord}) {
+  const events = macroEvents(macro).slice(0, 5);
   return (
     <Panel title="Impact Calendar">
-      {["CPI Data Release", "NVDA Earnings", "Fed Chair Powell Speech"].map((item, index) => (
-        <ValueRow key={item} label={index === 2 ? "MEDIUM" : "HIGH"} value={item} />
-      ))}
+      {events.length ? events.map((event, index) => (
+        <ValueRow key={`${eventTitle(event)}-${index}`} label={eventLevel(event)} value={`${eventTitle(event)} · ${eventTime(event)}`} />
+      )) : <EmptyState label="No impact calendar events returned by provider." />}
     </Panel>
   );
 }
 
-function EventImpact({ticker}: {ticker: string}) {
+function EventImpact({macro, ticker}: {macro: AnyRecord; ticker: string}) {
+  const event = macroEvents(macro)[0];
   return (
     <Panel title="Event Impact Analysis">
-      <Text style={styles.newsTitle}>CPI Data Release</Text>
-      <Text style={styles.longText}>If lower than expected, positive scenario can support QQQ, {ticker}, and mega-cap liquidity.</Text>
+      {event ? (
+        <>
+          <Text style={styles.newsTitle}>{eventTitle(event)}</Text>
+          <Text style={styles.longText}>
+            {text(first(event.analysis, event.summary, event.impact_summary, event.reason, `Provider returned this event for ${ticker}; confirm price and volume before acting.`))}
+          </Text>
+          <ValueRow label="When" value={eventTime(event)} />
+          <ValueRow label="Impact" value={eventLevel(event)} />
+        </>
+      ) : <EmptyState label="No event impact analysis returned by provider." />}
     </Panel>
   );
 }
 
 function AiSummary({analysis}: {analysis: AnyRecord}) {
+  const decision = analysis.decision || {};
   return (
     <Panel title="AI Insight Summary">
-      <Text style={styles.longText}>Probability of continuation: {num(first(analysis.decision?.confidence, 72), 0)}%</Text>
+      <Text style={styles.longText}>Probability of continuation: {num(decision.confidence, 0)}%</Text>
       <Text style={styles.longText}>Key support: {money(analysis.levels?.stop)}</Text>
-      <Text style={styles.longText}>Watch volume around key levels.</Text>
+      <Text style={styles.longText}>{text(first(decision.rationale, decision.reason, "Decision summary not returned by provider."))}</Text>
     </Panel>
   );
 }
@@ -793,16 +841,7 @@ function SentimentPanel() {
 function SentimentBody() {
   return (
     <View>
-      <View style={styles.sentimentArc}>
-        <View style={[styles.sentimentSegment, styles.sentimentRed]} />
-        <View style={[styles.sentimentSegment, styles.sentimentAmber]} />
-        <View style={[styles.sentimentSegment, styles.sentimentGreen]} />
-      </View>
-      <Text style={styles.sentimentScore}>78</Text>
-      <Text style={styles.sentimentLabel}>BULLISH</Text>
-      <ValueRow label="Bullish" value="62%" />
-      <ValueRow label="Neutral" value="23%" />
-      <ValueRow label="Bearish" value="15%" />
+      <EmptyState label="Market sentiment feed not returned by provider." />
     </View>
   );
 }
@@ -811,10 +850,10 @@ function BottomMovers({watch, chooseTicker}: {watch: string[]; chooseTicker: (ti
   return (
     <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.bottomMovers} contentContainerStyle={styles.bottomMoverContent} testID="top-movers">
       <Text style={styles.bottomTitle}>TOP MOVERS</Text>
-      {watch.map((symbol, index) => (
+      {watch.map((symbol) => (
         <TouchableOpacity key={symbol} onPress={() => chooseTicker(symbol)} style={styles.mover}>
           <Text style={styles.moverSymbol}>{symbol}</Text>
-          <Text style={[styles.moverDelta, index > 4 && styles.tapeDeltaBad]}>{index > 4 ? "-1.85%" : "+2.02%"}</Text>
+          <Text style={styles.moverDelta}>Open</Text>
         </TouchableOpacity>
       ))}
     </ScrollView>
@@ -823,12 +862,19 @@ function BottomMovers({watch, chooseTicker}: {watch: string[]; chooseTicker: (ti
 
 function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
   const change = Number(analysis.quote?.change_pct);
-  const marketItems = [
-    ["S&P 500", "5,543.22", "+0.98%"],
-    ["NASDAQ", "17,875.58", "+1.35%"],
-    [ticker, money(analysis.quote?.price), Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "LIVE"],
-    ["VIX", "15.24", "-6.25%"],
+  const indexItems = arr(first(analysis.market_indices, analysis.indices, analysis.market?.indices)).map((item) => [
+    text(first(item.symbol, item.name, item.label)),
+    displayData(first(item.value, item.price, item.last)),
+    Number.isFinite(Number(first(item.change_pct, item.changePercent, item.percent_change)))
+      ? `${Number(first(item.change_pct, item.changePercent, item.percent_change)) >= 0 ? "+" : ""}${pct(first(item.change_pct, item.changePercent, item.percent_change))}`
+      : text(first(item.status, item.state, "")),
+  ]);
+  const tickerItem = [
+    ticker,
+    money(analysis.quote?.price),
+    Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "Live data",
   ];
+  const marketItems = [...indexItems, tickerItem].filter(([, value]) => hasUsefulValue(value) && value !== "Not returned");
 
   return (
     <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tape} contentContainerStyle={styles.tapeContent}>
@@ -843,28 +889,34 @@ function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
   );
 }
 
-function EventStrip() {
-  const events = [
-    ["HIGH", "CPI Data Release", "8:30 AM"],
-    ["HIGH", "Retail Sales", "10:00 AM"],
-    ["MED", "Fed Chair Speech", "1:00 PM"],
-  ];
+function EventStrip({macro}: {macro: AnyRecord}) {
+  const events = macroEvents(macro).slice(0, 6);
 
   return (
     <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.events} contentContainerStyle={styles.eventContent}>
       <View style={styles.eventIntro}>
         <Text style={styles.eventIntroText}>Today's Key Events</Text>
       </View>
-      {events.map(([level, title, time]) => (
-        <View key={title} style={styles.eventCard}>
-          <View style={[styles.eventDot, level === "MED" && styles.eventDotMed]} />
+      {events.length ? events.map((event, index) => {
+        const level = eventLevel(event);
+        return (
+        <View key={`${eventTitle(event)}-${index}`} style={styles.eventCard}>
+          <View style={[styles.eventDot, level !== "HIGH" && styles.eventDotMed]} />
           <View>
-            <Text style={[styles.eventLevel, level === "MED" && styles.eventLevelMed]}>{level}</Text>
-            <Text style={styles.eventTitle}>{title}</Text>
+            <Text style={[styles.eventLevel, level !== "HIGH" && styles.eventLevelMed]}>{level}</Text>
+            <Text numberOfLines={2} style={styles.eventTitle}>{eventTitle(event)}</Text>
           </View>
-          <Text style={styles.eventTime}>{time}</Text>
+          <Text numberOfLines={2} style={styles.eventTime}>{eventTime(event)}</Text>
         </View>
-      ))}
+      );}) : (
+        <View style={styles.eventCard}>
+          <View style={styles.eventDotMed} />
+          <View>
+            <Text style={styles.eventLevelMed}>INFO</Text>
+            <Text style={styles.eventTitle}>No impact events returned</Text>
+          </View>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -914,7 +966,7 @@ function PageContent({
             ["Live Price", money(analysis.quote?.price)],
             ["Change", pct(analysis.quote?.change_pct)],
             ["Technical Score", num(analysis.decision?.technical_score, 1)],
-            ["Decision", analysis.decision?.action || "WATCH"],
+            ["Decision", text(first(analysis.decision?.action, analysis.decision?.signal, analysis.signal))],
           ]}
         />
         <TerminalGrid>
@@ -949,7 +1001,7 @@ function PageContent({
             ["Technical Score", num(analysis.decision?.technical_score, 1)],
             ["Fundamental Score", num(first(fundamental.scores?.fundamental_score, company.scores?.overall_company_score), 1)],
             ["Market Cap", money(first(profile.market_cap, profile.marketCap, fundamental.marketCap))],
-            ["Decision", analysis.decision?.action || "WATCH"],
+            ["Decision", text(first(analysis.decision?.action, analysis.decision?.signal, analysis.signal))],
           ]}
         />
         <Panel title="Technical Intelligence">
@@ -1000,10 +1052,10 @@ function QuoteTerminal({
         <View style={styles.quoteIdentity}>
           <Text style={styles.quoteTicker}>{ticker}</Text>
           <Text numberOfLines={1} style={styles.quoteName}>
-            {profile.name || profile.longName || `${ticker} market workspace`}
+            {text(first(profile.name, profile.longName))}
           </Text>
           <Text numberOfLines={1} style={styles.quoteSector}>
-            {first(profile.sector, "Market")} • {first(profile.industry, "Live intelligence")}
+            {text(profile.sector)} • {text(profile.industry)}
           </Text>
         </View>
         <View style={styles.quotePriceBox}>
@@ -1028,7 +1080,7 @@ function TerminalGrid({children}: {children: React.ReactNode}) {
 }
 
 function SetupPanel({analysis}: {analysis: AnyRecord}) {
-  const signal = analysis.decision?.action || analysis.signal || "WAIT";
+  const signal = text(first(analysis.decision?.action, analysis.signal));
   const score = num(first(analysis.decision?.technical_score, analysis.setup_quality), 0);
   return (
     <Panel title="Trade Setup">
@@ -1050,19 +1102,19 @@ function SetupPanel({analysis}: {analysis: AnyRecord}) {
 function MarketContext({analysis, profile}: {analysis: AnyRecord; profile: AnyRecord}) {
   return (
     <Panel title="Market Context">
-      <ValueRow label="Overall Market" value="Bullish" />
-      <ValueRow label="Sector" value={text(first(profile.sector, "Market"))} />
-      <ValueRow label="Regime" value={text(first(analysis.technical?.trend, "Mixed"))} />
-      <ValueRow label="Volatility" value={text(first(analysis.technical?.volatility, "Normal"))} />
+      <ValueRow label="Overall Market" value={text(first(analysis.market_context?.overall, analysis.market?.regime))} />
+      <ValueRow label="Sector" value={text(profile.sector)} />
+      <ValueRow label="Regime" value={text(analysis.technical?.trend)} />
+      <ValueRow label="Volatility" value={text(analysis.technical?.volatility)} />
     </Panel>
   );
 }
 
 function MarketTrendPanel({analysis}: {analysis: AnyRecord}) {
   const technical = analysis.technical || {};
-  const trend = text(first(technical.trend, analysis.trend, "Mixed"));
-  const momentum = text(first(technical.momentum, "Neutral"));
-  const action = text(first(analysis.decision?.action, analysis.signal, "WATCH"));
+  const trend = text(first(technical.trend, analysis.trend));
+  const momentum = text(technical.momentum);
+  const action = text(first(analysis.decision?.action, analysis.signal));
   return (
     <Panel title="Market Trend">
       <View style={styles.trendRow}>
@@ -1156,8 +1208,6 @@ function ChartPanel({
   timeframe: Timeframe;
 }) {
   const valid = chartRows(rows);
-  const fallback = valid.length ? [] : fallbackChartRows(analysis.quote?.price);
-  const displayRows = valid.length ? valid : fallback;
 
   return (
     <Panel title={`Market Chart · ${ticker}`}>
@@ -1168,11 +1218,11 @@ function ChartPanel({
           </TouchableOpacity>
         ))}
       </View>
-      {displayRows.length ? (
+      {valid.length ? (
         <>
-          <CandleChart analysis={analysis} rows={displayRows} height={180} count={42} />
+          <CandleChart analysis={analysis} rows={valid} height={230} count={42} />
           <View style={styles.chartMeta}>
-            <Text style={styles.metaText}>{valid.length ? `${valid.slice(-42).length} candles` : "Provider did not return OHLC candles"}</Text>
+            <Text style={styles.metaText}>{valid.slice(-42).length} real candles</Text>
             <Text style={styles.metaText}>{timeframe}</Text>
           </View>
         </>
@@ -1191,20 +1241,21 @@ function ChartIntelPanel({analysis, timeframe}: {analysis: AnyRecord; timeframe:
     technical.pattern?.label,
     analysis.pattern?.name,
     analysis.pattern?.label,
-    analysis.pattern?.type,
-    `${first(technical.trend, "Mixed")} continuation`
+    analysis.pattern?.type
   );
   const confidence = first(decision.confidence, decision.technical_score, analysis.setup_quality);
 
   return (
     <Panel title="Pattern Analysis">
       <Text style={styles.longText}>
-        {text(pattern)} is being monitored on the {timeframe} chart with production decision output held separate from research validation.
+        {hasUsefulValue(pattern)
+          ? `${text(pattern)} is being monitored on the ${timeframe} chart with production decision output held separate from research validation.`
+          : `Pattern analysis was not returned for the ${timeframe} chart.`}
       </Text>
-      <ValueRow label="Predicted Bias" value={text(decision.action || decision.signal || analysis.signal || "WAIT")} />
-      <ValueRow label="Trend" value={text(first(technical.trend, "Mixed"))} />
-      <ValueRow label="Momentum" value={text(first(technical.momentum, "Neutral"))} />
-      <ValueRow label="Volatility" value={text(first(technical.volatility, "Normal"))} />
+      <ValueRow label="Predicted Bias" value={text(first(decision.action, decision.signal, analysis.signal))} />
+      <ValueRow label="Trend" value={text(technical.trend)} />
+      <ValueRow label="Momentum" value={text(technical.momentum)} />
+      <ValueRow label="Volatility" value={text(technical.volatility)} />
       <ValueRow label="Confidence" value={num(confidence, 0)} />
     </Panel>
   );
@@ -1213,14 +1264,7 @@ function ChartIntelPanel({analysis, timeframe}: {analysis: AnyRecord; timeframe:
 function TopMoversPanel() {
   return (
     <Panel title="Top Movers">
-      <View testID="top-movers" style={styles.mobileMovers}>
-        {["NVDA", "AMD", "AVGO", "TSLA", "META", "INTC"].map((symbol, index) => (
-          <View key={symbol} style={styles.mobileMover}>
-            <Text style={styles.moverSymbol}>{symbol}</Text>
-            <Text style={[styles.moverDelta, index > 4 && styles.tapeDeltaBad]}>{index > 4 ? "-2.15%" : `+${(2.02 + index * 0.28).toFixed(2)}%`}</Text>
-          </View>
-        ))}
-      </View>
+      <EmptyState label="Top movers feed not returned by provider." />
     </Panel>
   );
 }
@@ -1229,7 +1273,6 @@ function ScannerPage({ticker}: {ticker: string}) {
   const [sector, setSector] = useState(SECTORS[0]);
   const [trigger, setTrigger] = useState(SCAN_TRIGGERS[1]);
   const [interval, setInterval] = useState(ALERT_INTERVALS[1]);
-  const rows = scannerRows(sector, ticker);
 
   return (
     <>
@@ -1271,23 +1314,7 @@ function ScannerPage({ticker}: {ticker: string}) {
         </View>
       </Panel>
       <Panel title="Current Top Candidates">
-        {rows.map((row, index) => (
-          <View key={`${row.symbol}-${index}`} style={styles.scanRow}>
-            <View style={styles.rankBubble}><Text style={styles.rankText}>{index + 1}</Text></View>
-            <View style={styles.scanBody}>
-              <View style={styles.scanHead}>
-                <Text style={styles.scanSymbol}>{row.symbol}</Text>
-                <Text style={styles.scanScore}>{row.score}/100</Text>
-              </View>
-              <Text style={styles.scanReason}>{row.reason}</Text>
-              <View style={styles.scanMetaRow}>
-                <Text style={styles.scanMeta}>Upside {row.upside}</Text>
-                <Text style={styles.scanMeta}>{row.timeframe}</Text>
-                <Text style={styles.scanMeta}>{row.catalyst}</Text>
-              </View>
-            </View>
-          </View>
-        ))}
+        <EmptyState label={`Live top-50 scanner rankings were not returned for ${sector}. Keep the alert rule, then connect the scanner API feed for candidates, upside, catalysts, and timeframes.`} />
       </Panel>
     </>
   );
@@ -1298,7 +1325,7 @@ function AlertsPage({analysis, news, ticker}: {analysis: AnyRecord; news: AnyRec
   const [scannerOn, setScannerOn] = useState(true);
   const [portfolioInterval, setPortfolioInterval] = useState(ALERT_INTERVALS[2]);
   const [scannerInterval, setScannerInterval] = useState(ALERT_INTERVALS[1]);
-  const signal = text(analysis.decision?.action || analysis.signal || "WAIT");
+  const signal = text(first(analysis.decision?.action, analysis.decision?.signal, analysis.signal));
   const change = Number(analysis.quote?.change_pct);
   const headlines = arr(first(news.items, news.news, news.articles)).slice(0, 2);
 
@@ -1394,30 +1421,6 @@ function MorePage({setPage}: {setPage: (page: Page) => void}) {
   );
 }
 
-function scannerRows(sector: string, ticker: string) {
-  const cleanTicker = ticker.trim().toUpperCase();
-  const baseUniverse = sector === "Biotech / Healthcare"
-    ? ["MRNA", "LLY", "NVO", "VRTX", "REGN"]
-    : sector === "Space / Defense"
-      ? ["LMT", "RTX", "NOC", "BA", "RKLB"]
-      : sector === "Energy"
-        ? ["XOM", "CVX", "OXY", "URA", "CCJ"]
-        : sector === "Financials"
-          ? ["JPM", "BAC", "GS", "HOOD", "COIN"]
-          : sector === "Software / Cloud"
-            ? ["NET", "CRWD", "PANW", "DDOG", "SNOW"]
-            : ["NVDA", "AMD", "AVGO", "TSLA", cleanTicker];
-  const universe = Array.from(new Set(baseUniverse.filter(Boolean)));
-  return universe.map((symbol, index) => ({
-    symbol,
-    score: 86 - index * 4,
-    upside: `${(7.4 - index * 0.8).toFixed(1)}%`,
-    timeframe: index < 2 ? "1-5 sessions" : "1-3 weeks",
-    catalyst: index % 2 ? "policy/news" : "volume/catalyst",
-    reason: `${symbol} is being watched for fresh catalyst language, relative volume, price confirmation, and sector momentum before the move becomes crowded.`,
-  }));
-}
-
 function chartRows(rows: any[]) {
   return arr(rows)
     .map((row) => ({
@@ -1429,24 +1432,6 @@ function chartRows(rows: any[]) {
       volume: Number(row.volume),
     }))
     .filter((row) => [row.open, row.high, row.low, row.close].every(Number.isFinite));
-}
-
-function fallbackChartRows(price: any) {
-  const base = Number(price);
-  if (!Number.isFinite(base)) return [];
-  return Array.from({length: 24}, (_, index) => {
-    const drift = Math.sin(index / 2.4) * 0.006 + (index - 12) * 0.00025;
-    const open = base * (1 + drift);
-    const close = open * (1 + Math.sin(index / 1.7) * 0.002);
-    return {
-      close,
-      high: Math.max(open, close) * 1.002,
-      low: Math.min(open, close) * 0.998,
-      open,
-      time: `preview-${index}`,
-      volume: 0,
-    };
-  });
 }
 
 function CandleChart({
@@ -1509,16 +1494,12 @@ function CandleChart({
             );
           })}
         </View>
-        <View style={[styles.tradeZone, {top: Math.max(22, y(last.close) - 58)}]} />
-        <Text style={[styles.signalBuy, desktop && styles.signalBuyDesktop]}>BUY SIGNAL</Text>
-        <Text style={[styles.signalBreak, desktop && styles.signalBreakDesktop]}>BREAKOUT</Text>
-        <Text style={[styles.signalStop, desktop && styles.signalStopDesktop]}>STOP LOSS</Text>
       </View>
       <View testID="chart-selected-candle" style={styles.chartReadout}>
         <Text style={styles.chartReadoutTitle}>{activeBias} · {pct(activeMove)}</Text>
         <Text style={styles.chartReadoutText}>O {money(active.open)}  H {money(active.high)}  L {money(active.low)}  C {money(active.close)}</Text>
         <Text style={styles.chartReadoutText}>
-          Pattern engine: {text(first(analysis.pattern?.name, analysis.technical?.pattern?.name, analysis.technical?.trend, "Monitoring"))}
+          {friendlyDate(active.time)} · Volume {compactNumber(active.volume)}
         </Text>
       </View>
     </View>
@@ -1546,7 +1527,7 @@ function TechnicalCards({analysis}: {analysis: AnyRecord}) {
 function DecisionBox({decision}: {decision: AnyRecord}) {
   return (
     <View>
-      <Text style={styles.decisionMain}>{decision?.action || decision?.signal || "WATCH"}</Text>
+      <Text style={styles.decisionMain}>{text(first(decision?.action, decision?.signal))}</Text>
       <ValueRow label="Technical Score" value={num(first(decision?.technical_score, decision?.score), 1)} />
       <ValueRow label="Confidence" value={num(decision?.confidence, 1)} />
       <Text style={styles.longText}>{text(decision?.rationale || "Production decision engine output is preserved separately from research validation.")}</Text>
@@ -1865,7 +1846,7 @@ function BacktestingPage({analysis, macro, ticker}: {analysis: AnyRecord; macro:
           ["Candles", rows.length],
           ["Avg Daily Return", pct(avg)],
           ["Setup Quality", num(analysis.setup_quality, 1)],
-          ["Signal", analysis.signal || "WAIT"],
+          ["Signal", text(first(analysis.signal, analysis.decision?.action, analysis.decision?.signal))],
         ]}
       />
       <OptionalDataList title="Multi-Timeframe Inputs" data={analysis.technical?.mtf} />
@@ -2011,6 +1992,7 @@ const styles = StyleSheet.create({
   candleArea: {backgroundColor: "#071522", borderColor: "#14263a", borderRadius: 8, borderWidth: 1, flexDirection: "row", height: 380, marginTop: 10, overflow: "hidden"},
   indicatorRail: {padding: 12, width: 120},
   indicatorText: {color: "#aabbd0", fontSize: 11, marginBottom: 11},
+  indicatorMuted: {color: "#7d91aa", fontSize: 10, fontWeight: "800", lineHeight: 14},
   candleGrid: {alignItems: "flex-end", flex: 1, flexDirection: "row", gap: 5, padding: 22},
   candle: {borderRadius: 2, width: 8},
   candleChart: {backgroundColor: "#06111d", borderColor: "#14263a", borderRadius: 9, borderWidth: 1, flex: 1, margin: 8, overflow: "hidden", position: "relative"},
