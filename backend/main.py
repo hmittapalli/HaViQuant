@@ -164,6 +164,36 @@ def quote_fallback_history(ticker):
     )
 
 
+def provider_summary(ticker):
+    t = norm_ticker(ticker)
+    data = {}
+    try:
+        info = yf.Ticker(t).get_info() or {}
+        data.update(info)
+    except Exception:
+        try:
+            info = yf.Ticker(t).info or {}
+            data.update(info)
+        except Exception:
+            pass
+    try:
+        fast = yf.Ticker(t).fast_info or {}
+        for source, target in [
+            ("market_cap", "marketCap"),
+            ("last_price", "regularMarketPrice"),
+            ("previous_close", "previousClose"),
+            ("shares", "sharesOutstanding"),
+        ]:
+            value = fast.get(source)
+            if value is not None and data.get(target) is None:
+                data[target] = value
+    except Exception:
+        pass
+    if data.get("marketCap") is None and data.get("regularMarketPrice") and data.get("sharesOutstanding"):
+        data["marketCap"] = float(data["regularMarketPrice"]) * float(data["sharesOutstanding"])
+    return clean(data)
+
+
 def download(ticker, period="6mo", interval="1d"):
     # yfinance has no native 4H interval; fetch 1H and resample below.
     source_interval = "1h" if interval == "4h" else interval
@@ -427,16 +457,14 @@ def scanner_row(ticker):
         f"language while the chart reads {trend.lower()} with {momentum.lower()} momentum. "
         f"The current system signal is {signal} and the technical score is {round(float(tech_score), 1) if tech_score is not None else 'N/A'}."
     )
-    result["confirmation"] = [
-        "Follow-through above the prior day high",
-        "Volume expansion above the 20-day average",
-        "Fresh positive headline or analyst/event confirmation",
-    ]
-    result["risk_watch"] = risks[:3] or [
-        "Headline may already be priced in",
-        "Broad market weakness can override the setup",
-        "Wait for price confirmation before entry",
-    ]
+    result["confirmation"] = []
+    if result.get("trend") == "Bullish":
+        result["confirmation"].append("Provider technical trend is bullish")
+    if float(result.get("volume_ratio") or 0) >= 1.4:
+        result["confirmation"].append(f"Provider volume ratio is {round(float(result.get('volume_ratio')), 2)}x")
+    if positive:
+        result["confirmation"].append("Linked headline catalyst language: " + ", ".join(positive[:3]))
+    result["risk_watch"] = risks[:3]
     if signal == "BUY" and momentum == "Strong":
         result["estimated_bullish_timeframe"] = "1-5 trading days after price and volume confirmation"
     elif trend == "Bullish":
@@ -447,13 +475,11 @@ def scanner_row(ticker):
         result["estimated_bullish_timeframe"] = "No bullish timeframe yet; wait for trend reversal"
     lead_article = result["articles"][0] if result["articles"] else {}
     result["next_announcement_watch"] = {
-        "summary": lead_article.get("title") or "Watch the next earnings call, SEC filing, company update, product launch, regulatory update, or analyst revision.",
+        "summary": lead_article.get("title"),
         "source": lead_article.get("publisher") or "Market/news feed",
         "url": lead_article.get("url"),
     }
-    result["product_progress_watch"] = (
-        "Track product launches, customer contracts, regulatory milestones, production/delivery updates, and management guidance for confirmation."
-    )
+    result["product_progress_watch"] = None
     base_upside = 3 + max(0, (result["score"] - 60) / 8)
     if signal == "BUY": base_upside += 2
     if momentum == "Strong": base_upside += 1.5
@@ -574,7 +600,7 @@ INDEX_SYMBOLS = [
 
 def latest_market_row(symbol, label=None):
     try:
-        df = yf.download(symbol, period="5d", interval="1d", progress=False, auto_adjust=False, threads=False)
+        df = yf.Ticker(symbol).history(period="5d", interval="1d", auto_adjust=False)
     except Exception:
         df = None
     if df is None or df.empty:
@@ -709,6 +735,25 @@ def macro_event_feed(ticker):
 
 
 def company_info(ticker):
+    info = provider_summary(ticker)
+    if info:
+        return clean({
+            "ticker": ticker,
+            "name": info.get("longName") or info.get("shortName") or ticker,
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "marketCap": info.get("marketCap"),
+            "website": info.get("website"),
+            "country": info.get("country"),
+            "exchange": info.get("exchange"),
+            "profile": {
+                "name": info.get("longName") or info.get("shortName") or ticker,
+                "sector": info.get("sector"),
+                "industry": info.get("industry"),
+                "market_cap": info.get("marketCap"),
+                "description": info.get("longBusinessSummary"),
+            },
+        })
     try:
         info=yf.Ticker(ticker).info or {}
         return clean({"ticker":ticker,"name":info.get("longName") or info.get("shortName") or ticker,"sector":info.get("sector"),"industry":info.get("industry"),"marketCap":info.get("marketCap"),"website":info.get("website"),"country":info.get("country"),"exchange":info.get("exchange")})
@@ -717,26 +762,42 @@ def company_info(ticker):
 
 def fundamentals(ticker):
     data = {"ticker": ticker, "source": "Yahoo Finance via yfinance"}
-    try:
-        info=yf.Ticker(ticker).info or {}
-        data.update({
-            "marketCap":info.get("marketCap"),
-            "trailingPE":info.get("trailingPE"),
-            "forwardPE":info.get("forwardPE"),
-            "epsTrailingTwelveMonths":info.get("epsTrailingEps") or info.get("epsTrailingTwelveMonths"),
-            "revenueGrowth":info.get("revenueGrowth"),
-            "profitMargins":info.get("profitMargins"),
-            "returnOnEquity":info.get("returnOnEquity"),
-            "dividendYield":info.get("dividendYield"),
-            "beta":info.get("beta"),
-        })
-    except Exception as e:
-        data["primary_error"] = str(e)
-    try:
-        fast = yf.Ticker(ticker).fast_info or {}
-        data["marketCap"] = data.get("marketCap") or fast.get("market_cap")
-    except Exception:
-        pass
+    info = provider_summary(ticker)
+    data.update({
+        "marketCap": info.get("marketCap"),
+        "trailingPE": info.get("trailingPE"),
+        "forwardPE": info.get("forwardPE"),
+        "epsTrailingTwelveMonths": info.get("epsTrailingEps") or info.get("epsTrailingTwelveMonths") or info.get("trailingEps"),
+        "revenueGrowth": info.get("revenueGrowth"),
+        "profitMargins": info.get("profitMargins"),
+        "returnOnEquity": info.get("returnOnEquity"),
+        "dividendYield": info.get("dividendYield"),
+        "beta": info.get("beta"),
+        "profile": {
+            "name": info.get("longName") or info.get("shortName") or ticker,
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "market_cap": info.get("marketCap"),
+            "trailing_pe": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+            "profit_margin": info.get("profitMargins"),
+            "roe": info.get("returnOnEquity"),
+            "revenue_growth": info.get("revenueGrowth"),
+            "description": info.get("longBusinessSummary"),
+        },
+        "valuation": {
+            "trailing_pe": info.get("trailingPE"),
+            "forward_pe": info.get("forwardPE"),
+        },
+        "growth": {"revenue_growth": info.get("revenueGrowth")},
+        "profitability": {
+            "profit_margin": info.get("profitMargins"),
+            "roe": info.get("returnOnEquity"),
+        },
+        "earnings": {"trailing_eps": info.get("trailingEps")},
+    })
+    if not any(data.get(key) is not None for key in ["marketCap", "trailingPE", "forwardPE", "epsTrailingTwelveMonths"]):
+        data["provider_error"] = "Provider fundamentals unavailable"
     return clean(data)
 
 

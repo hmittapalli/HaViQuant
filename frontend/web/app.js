@@ -102,9 +102,9 @@ const arr = (x) => Array.isArray(x) ? x : !x ? [] : Array.isArray(x.items) ? x.i
 const num = (x, d = 2) => Number.isFinite(Number(x)) ? Number(x).toFixed(d) : "-";
 const pct = (x) => Number.isFinite(Number(x)) ? `${Number(x).toFixed(2)}%` : "-";
 const plusPct = (x) => Number.isFinite(Number(x)) ? `+${Number(x).toFixed(2)}%` : "-";
-const signedPct = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : "Not returned";
-const formatDelta = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : displayValue(x, "provider");
-const formatMarketValue = (x) => Number.isFinite(Number(x)) ? Number(x).toLocaleString(undefined, {maximumFractionDigits: 2}) : displayValue(x);
+const signedPct = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : "";
+const formatDelta = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : "";
+const formatMarketValue = (x) => Number.isFinite(Number(x)) ? Number(x).toLocaleString(undefined, {maximumFractionDigits: 2}) : displayValue(x, "");
 const compactNumber = (x) => {
   const n = Number(x);
   if (!Number.isFinite(n)) return "Not returned";
@@ -271,7 +271,10 @@ function metric(label, value, cls = "") {
 }
 
 function rows(obj) {
-  return Object.entries(obj || {}).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(formatCell(v))}</b></div>`).join("");
+  return Object.entries(obj || {})
+    .filter(([, v]) => hasValue(v) && formatCell(v) !== "Not returned")
+    .map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(formatCell(v))}</b></div>`)
+    .join("");
 }
 
 function formatCell(value) {
@@ -349,15 +352,15 @@ function marketTape() {
   ]);
   const items = [
     ...indexes,
-    [state.ticker, money(a.price), Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "LIVE"],
-  ].filter(([l, v]) => first(l, "") && first(v, "") && String(v) !== "Not returned" && String(v) !== "-");
-  return `<div class="tape">${items.length ? items.map(([l, v, d]) => `<span><b>${esc(l)}</b><strong>${esc(formatMarketValue(v))}</strong><em class="${String(d).startsWith("-") ? "bad" : "good"}">${esc(formatDelta(d))}</em></span>`).join("") : `<span><b>Market Tape</b><strong>Not returned</strong><em>provider</em></span>`}</div>`;
+    [state.ticker, a.price, change],
+  ].filter(([l, v]) => first(l, "") && Number.isFinite(Number(v)));
+  return `<div class="tape">${items.map(([l, v, d]) => `<span><b>${esc(l)}</b><strong>${esc(formatMarketValue(v))}</strong>${Number.isFinite(Number(d)) ? `<em class="${Number(d) < 0 ? "bad" : "good"}">${esc(formatDelta(d))}</em>` : ""}</span>`).join("")}</div>`;
 }
 
 function events() {
   const items = calendarEvents().slice(0, 4);
   return `<button class="event-intro" data-open-calendar="1">Impact Calendar<br><small>${esc(todayLabel())}</small></button>${items.length ? items.map((event) => `
-    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${esc(event.level)}</b><span>${esc(event.title)}</span><em>${esc(event.dateLabel)}</em></div><small><strong>${esc(event.time)}</strong><em>${esc(event.status)}</em></small></button>`).join("") : `<button class="event-card info"><i></i><div><b>INFO</b><span>No impact events returned</span><em>${esc(todayLabel())}</em></div><small><strong>Provider</strong><em>empty</em></small></button>`}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
+    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${esc(event.level)}</b><span>${esc(event.title)}</span><em>${esc(event.dateLabel)}</em></div><small><strong>${esc(event.time)}</strong><em>${esc(event.status)}</em></small></button>`).join("") : ""}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
 }
 
 function topMovers() {
@@ -378,7 +381,13 @@ function topMovers() {
 }
 
 function moverTooltip(item) {
-  return `${item.symbol} - ${displayValue(item.name, "Name not returned")}\nPrice: ${money(item.price)}\nMove: ${formatDelta(item.change)}\nSector: ${displayValue(item.sector)}\nClick to load full analysis`;
+  return [
+    `${item.symbol}${hasValue(item.name) ? ` - ${item.name}` : ""}`,
+    Number.isFinite(Number(item.price)) ? `Price: ${money(item.price)}` : "",
+    Number.isFinite(Number(item.change)) ? `Move: ${formatDelta(item.change)}` : "",
+    hasValue(item.sector) ? `Sector: ${item.sector}` : "",
+    "Click to load full analysis",
+  ].filter(Boolean).join("\n");
 }
 
 function showStockTooltip(button) {
@@ -440,6 +449,7 @@ function sentimentBox(extra = "") {
   const data = first(state.macro?.sentiment, state.analysis?.market_sentiment, {});
   const score = first(data.score, data.value, data.market_score);
   const label = first(data.label, data.state, data.regime);
+  if (!hasValue(score) && !hasValue(label)) return "";
   const rowsData = {
     Bullish: first(data.bullish_pct, data.bullish),
     Neutral: first(data.neutral_pct, data.neutral),
@@ -448,7 +458,7 @@ function sentimentBox(extra = "") {
   return `<section class="sentiment-box ${extra}" data-testid="market-sentiment">
     <h3>Market Sentiment</h3>
     <div class="gauge"><i></i><i></i><i></i></div>
-    <strong>${esc(hasValue(score) ? num(score, 0) : "-")}</strong><b>${esc(displayValue(label, "Not returned"))}</b>
+    <strong>${esc(hasValue(score) ? num(score, 0) : "-")}</strong>${hasValue(label) ? `<b>${esc(label)}</b>` : ""}
     ${rows(rowsData)}
   </section>`;
 }
@@ -558,16 +568,12 @@ function tradingDesk() {
         <div class="quote-head">
           <div><h1>${esc(state.ticker)}</h1><span>${esc(displayValue(profile.name, state.ticker))}</span>${classification ? `<small>${esc(classification)}</small>` : ""}</div>
           <div class="price-block"><strong>${money(price)}</strong><em class="${change < 0 ? "bad" : "good"}">${signedPct(change)}</em><small>Real-time</small></div>
-          <div class="range"><label>Session Range</label><b title="Computed from returned intraday candle high/low values">${esc(stats.range)}</b><small>From live candles</small></div>
-          <div class="range"><label>Session Volume</label><b>${esc(stats.volume)}</b><small>${num(a.volume_ratio)}x Avg</small></div>
+          ${stats.range !== "Not returned" ? `<div class="range"><label>Session Range</label><b title="Computed from returned intraday candle high/low values">${esc(stats.range)}</b><small>From live candles</small></div>` : ""}
+          ${stats.volume !== "Not returned" ? `<div class="range"><label>Session Volume</label><b>${esc(stats.volume)}</b>${hasValue(a.volume_ratio) ? `<small>${num(a.volume_ratio)}x Avg</small>` : ""}</div>` : ""}
           ${capMetric}
         </div>
         ${chartPanel()}
-        <div class="lower-grid">
-          ${impactCalendar()}
-          ${eventImpact()}
-          ${mtfPanel()}
-        </div>
+        ${lowerDeskPanels()}
       </section>
       <aside class="right-rail">
         ${setupPanel()}
@@ -579,6 +585,11 @@ function tradingDesk() {
         ${aiPanel()}
       </aside>
     </div>`;
+}
+
+function lowerDeskPanels() {
+  const panels = [impactCalendar(), eventImpact(), mtfPanel()].filter(Boolean);
+  return panels.length ? `<div class="lower-grid">${panels.join("")}</div>` : "";
 }
 
 function chartPanel() {
@@ -614,7 +625,7 @@ function indicatorList() {
     ["VWAP", a.vwap],
     ["Volume", a.volume],
   ].filter(([, value]) => hasValue(value));
-  if (!items.length) return `<div class="indicator-list muted"><b>Indicators</b><em>Not returned</em></div>`;
+  if (!items.length) return "";
   return `<div class="indicator-list">${items.map(([label, value]) => `<b>${esc(label)}</b><em>${esc(label === "Volume" ? compactNumber(value) : money(value))}</em>`).join("")}</div>`;
 }
 
@@ -641,7 +652,8 @@ function setupPanel() {
   const macdState = Number.isFinite(Number(a.macd)) && Number.isFinite(Number(a.macd_signal))
     ? (Number(a.macd) >= Number(a.macd_signal) ? "Bullish" : "Bearish")
     : "Not returned";
-  const detailRows = rows({Trend: a.trend, Momentum: a.momentum, Volume: hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x` : null, VWAP: vwapState, "RSI (14)": hasValue(a.rsi) ? num(a.rsi) : null, MACD: macdState});
+  const detailRows = rows({Trend: a.trend, Momentum: a.momentum, Volume: hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x` : null, VWAP: vwapState === "Not returned" ? null : vwapState, "RSI (14)": hasValue(a.rsi) ? num(a.rsi) : null, MACD: macdState === "Not returned" ? null : macdState});
+  if (!hasValue(a.setup_quality) && !detailRows) return "";
   return card("Trade Setup", `
     <div class="setup-title"><div><strong>${esc(signal)} SETUP</strong><span>${signal === "BUY" ? "High Probability" : "Await confirmation"}</span></div><b>${hasValue(a.setup_quality) ? num(a.setup_quality, 0) : "-"}<small>/100</small></b></div>
     ${detailRows}
@@ -706,6 +718,7 @@ function patternPanel() {
 
 function livePricePanel() {
   const a = state.analysis || {};
+  if (!Number.isFinite(Number(a.price))) return "";
   return card("Live Price", `<div class="mini-price">${money(a.price)} <em class="${a.change_pct < 0 ? "bad" : "good"}">${signedPct(a.change_pct)}</em></div><div class="mini-spark"></div><div class="day-range"><i></i></div>`);
 }
 
@@ -726,15 +739,16 @@ function aiPanel() {
 
 function impactCalendar() {
   const selected = calendarEvents();
+  if (!selected.length) return "";
   return card("Impact Calendar", `
     <div class="tabs">${CALENDAR_TABS.map((tab) => `<button class="${state.calendarTab === tab ? "active" : ""}" data-calendar-tab="${tab}">${tab}</button>`).join("")}</div>
-    <div class="impact-list">${selected.length ? selected.map((event) => `<button class="impact-row ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><b>${esc(event.level)}</b><span>${esc(event.title)}<small>${esc(event.dateLabel)} · ${esc(event.time)}</small></span><em>${esc(event.impact)}</em></button>`).join("") : `<div class="empty">No impact calendar events returned by provider.</div>`}</div>
+    <div class="impact-list">${selected.map((event) => `<button class="impact-row ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><b>${esc(event.level)}</b><span>${esc(event.title)}<small>${esc(event.dateLabel)} · ${esc(event.time)}</small></span><em>${esc(event.impact)}</em></button>`).join("")}</div>
   `);
 }
 
 function eventImpact() {
   const event = eventByTitle(state.selectedEvent);
-  if (!event) return card("Event Impact Analysis", `<div class="empty">No event impact details returned by provider.</div>`);
+  if (!event || event.scenario === "Provider did not return event impact detail.") return "";
   return card("Event Impact Analysis", `
     <h4>${esc(event.title)}</h4>
     <div class="event-meta"><span>${esc(event.level)}</span><span>${esc(event.category)}</span><span>${esc(event.dateLabel)}</span><span>${esc(event.time)}</span><span>${esc(event.impact)}</span></div>
@@ -801,9 +815,8 @@ function mtfPanel() {
   const a = state.analysis || {};
   const rows = arr(a.mtf);
   const confidence = Number(first(a.mtf_confidence, a.setup_quality));
-  const body = rows.length
-    ? rows.map((r) => `<div class="mtf"><b>${esc(r.tf || r.label)}</b><span>${esc(r.data?.trend || r.trend || "Not returned")}</span><em>${esc(r.data?.signal || r.signal || "Not returned")}</em></div>`).join("")
-    : `<div class="empty compact">Multi-timeframe rows were not returned by provider.</div>`;
+  if (!rows.length) return "";
+  const body = rows.map((r) => `<div class="mtf"><b>${esc(r.tf || r.label)}</b><span>${esc(formatCell(r.data?.trend || r.trend))}</span><em>${esc(formatCell(r.data?.signal || r.signal))}</em></div>`).join("");
   return card("Multi-Timeframe Analysis", body + (Number.isFinite(confidence) ? `<div class="confidence"><i style="width:${Math.min(100, confidence)}%"></i></div>` : ""));
 }
 
@@ -899,9 +912,7 @@ function companyModule() {
   const s = state.company?.scores || {};
   const cap = marketCap();
   const hasProfilePayload = hasValue(p.sector) || hasValue(p.industry) || hasValue(p.name) || hasValue(p.description) || hasValue(p.summary) || cap !== "Not returned";
-  if (!hasProfilePayload) {
-    return card("Company Profile", `<div class="empty compact">Company profile is loading or was not returned by the provider. No placeholder company data is shown.</div>`);
-  }
+  if (!hasProfilePayload) return "";
   const metrics = [
     ["Sector", p.sector],
     ["Industry", p.industry],
@@ -911,7 +922,7 @@ function companyModule() {
     ["Financial Strength", hasValue(s.financial_strength) ? num(s.financial_strength, 1) : null],
   ];
   const overview = first(p.description, p.summary);
-  return `<div class="module-grid">${metricList(metrics)}</div>${overview ? card("Business Overview", `<p class="small-copy">${esc(overview)}</p>`) : card("Company Profile", `<div class="empty compact">Company profile is still loading or was not returned by the provider.</div>`)}`;
+  return `<div class="module-grid">${metricList(metrics)}</div>${overview ? card("Business Overview", `<p class="small-copy">${esc(overview)}</p>`) : ""}`;
 }
 
 function fundamentalModule() {
@@ -935,8 +946,9 @@ function fundamentalModule() {
     ["Dividend Yield", hasValue(first(f.dividendYield, f.dividend_yield)) ? pct(Number(first(f.dividendYield, f.dividend_yield)) * (Math.abs(Number(first(f.dividendYield, f.dividend_yield))) <= 1 ? 100 : 1)) : null],
     ["Beta", hasValue(first(f.beta, state.company?.stock_level?.beta)) ? num(first(f.beta, state.company?.stock_level?.beta)) : null],
   ];
+  const sourceRows = rows({Source: f.source, Updated: first(f.updated_at, state.analysis?.updated_at)});
   return `<div class="module-grid">${metricList(metrics)}</div>
-    ${card("Fundamental Sources", rows({Source: first(f.source, "Provider fundamentals"), Updated: first(f.updated_at, state.analysis?.updated_at)}))}
+    ${sourceRows ? card("Fundamental Sources", sourceRows) : ""}
     ${insiderModule()}`;
 }
 
@@ -1064,6 +1076,15 @@ function scannerCard(item, index) {
   const confirms = arr(item.confirmation).slice(0, 3);
   const risks = arr(item.risk_watch).slice(0, 3);
   const score = Number(item.score || 0);
+  const nextWatch = first(item.next_announcement_watch?.summary, item.product_progress_watch);
+  const detailBlocks = [
+    confirms.length ? `<div><b>Confirm</b>${confirms.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` : "",
+    risks.length ? `<div><b>Risk</b>${risks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>` : "",
+  ].filter(Boolean).join("");
+  const nextBlocks = [
+    hasValue(item.estimated_bullish_timeframe) ? `<b>Approx Bullish Timeframe</b><span>${esc(item.estimated_bullish_timeframe)}</span>` : "",
+    hasValue(nextWatch) ? `<b>Next Linked Catalyst</b><span>${esc(nextWatch)}</span>` : "",
+  ].filter(Boolean).join("");
   return `<article class="scanner-card">
     <header>
       <div><small>#${index + 1}</small><button data-scan-open="${esc(item.ticker)}">${esc(item.ticker)}</button></div>
@@ -1080,16 +1101,10 @@ function scannerCard(item, index) {
     <div class="confidence"><i style="width:${Math.max(0, Math.min(100, score))}%"></i></div>
     <section class="scanner-thesis">
       <b>Why it can go up</b>
-      <p>${esc(item.upside_thesis || why[0] || "Provider did not return a catalyst thesis.")}</p>
+      <p>${esc(first(item.upside_thesis, why[0], "Provider did not return a catalyst thesis."))}</p>
     </section>
-    <div class="scanner-detail">
-      <div><b>Confirm</b>${confirms.map((x) => `<span>${esc(x)}</span>`).join("")}</div>
-      <div><b>Risk</b>${risks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>
-    </div>
-    <div class="scanner-next">
-      <b>Approx Bullish Timeframe</b><span>${esc(item.estimated_bullish_timeframe || "Not returned")}</span>
-      <b>Next Announcement / Product Progress</b><span>${esc(item.next_announcement_watch?.summary || item.product_progress_watch || "Not returned")}</span>
-    </div>
+    ${detailBlocks ? `<div class="scanner-detail">${detailBlocks}</div>` : ""}
+    ${nextBlocks ? `<div class="scanner-next">${nextBlocks}</div>` : ""}
     <ul>${why.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
     <div class="scanner-news">${articles.map((a) => `<a href="${esc(a.url || "#")}" target="_blank" rel="noreferrer">${esc(a.title || "Market headline")}</a>`).join("")}</div>
   </article>`;
