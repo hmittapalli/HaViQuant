@@ -54,9 +54,9 @@ decision_engine = DecisionEngine()
 PERIOD_RE = "^(1d|5d|7d|1mo|3mo|6mo|60d|1y|2y|5y|10y|max)$"
 INTERVAL_RE = "^(1m|2m|5m|15m|30m|60m|90m|1h|1d|5d|1wk|1mo|3mo)$"
 MARKET_TAPE = {
-    "S&P 500": "SPY",
-    "NASDAQ": "QQQ",
-    "DOW": "DIA",
+    "S&P 500": "^GSPC",
+    "NASDAQ": "^IXIC",
+    "DOW": "^DJI",
     "VIX": "^VIX",
 }
 SCANNER_SECTORS = {
@@ -319,34 +319,75 @@ def _fundamental_payload(ticker: str, error: Optional[str] = None):
         "source": summary.get("source") if summary.get("market_cap") else None,
     })
 
-def _quote_row(symbol: str, label: str | None = None):
+def _history_quote_row(symbol: str, label: str | None = None):
     try:
-        quote_data = get_live_quote(symbol)
-        price = _num(quote_data.get("price"))
-        if price is None:
+        import yfinance as yf
+        df = yf.Ticker(symbol).history(period="5d", interval="1d", auto_adjust=False)
+        if df is None or df.empty:
             return None
+        df = df.dropna(subset=["Close"]).sort_index()
+        if df.empty:
+            return None
+        close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+        if close.empty:
+            return None
+        price = _num(close.iloc[-1])
+        previous = _num(close.iloc[-2]) if len(close) > 1 else None
+        change_pct = ((price / previous - 1) * 100) if price and previous else None
+        volume = _num(pd.to_numeric(df.get("Volume", pd.Series(dtype=float)), errors="coerce").fillna(0).iloc[-1])
         return {
             "symbol": label or symbol,
             "ticker": symbol,
             "price": price,
-            "change_pct": _num(quote_data.get("change_pct")),
-            "source": quote_data.get("source"),
+            "change_pct": _num(change_pct),
+            "volume": volume,
+            "source": "Yahoo Finance history",
         }
     except Exception:
         return None
 
+def _quote_row(symbol: str, label: str | None = None):
+    try:
+        quote_data = get_live_quote(symbol)
+        price = _num(quote_data.get("price"))
+        if price is not None:
+            return {
+                "symbol": label or symbol,
+                "ticker": symbol,
+                "price": price,
+                "change_pct": _num(quote_data.get("change_pct")),
+                "volume": _num(quote_data.get("volume")),
+                "source": quote_data.get("source"),
+            }
+    except Exception:
+        pass
+    return _history_quote_row(symbol, label)
+
 def _market_macro_payload(ticker: str):
     tape = [row for label, symbol in MARKET_TAPE.items() if (row := _quote_row(symbol, label))]
     quoted = _quote_row(ticker.upper())
-    universe = ["NVDA", "AMD", "AVGO", "MSFT", "AAPL", "GOOGL", "META", "AMZN", "TSLA", "CRWD", "PANW", "NOW"]
+    universe = sorted({
+        symbol
+        for symbols in SCANNER_SECTORS.values()
+        if symbols
+        for symbol in symbols
+    })
     movers = [row for symbol in universe if (row := _quote_row(symbol))]
     gainers = sorted(
         [row for row in movers if row.get("change_pct") is not None],
         key=lambda row: row["change_pct"],
         reverse=True,
     )[:12]
-    most_active = gainers
-    scores = [row["change_pct"] for row in tape if row.get("change_pct") is not None]
+    most_active = sorted(
+        [row for row in movers if row.get("volume") is not None],
+        key=lambda row: row["volume"],
+        reverse=True,
+    )[:12] or gainers
+    scores = [
+        row["change_pct"]
+        for row in tape
+        if row.get("ticker") != "^VIX" and row.get("change_pct") is not None
+    ]
     avg = sum(scores) / len(scores) if scores else None
     sentiment = None
     if avg is not None:
@@ -371,12 +412,67 @@ def _market_macro_payload(ticker: str):
         "ticker": ticker.upper(),
         "quote": quoted,
         "market_indices": tape,
-        "top_movers": {"gainers": gainers, "most_active": most_active},
+        "top_movers": {"items": gainers, "gainers": gainers, "most_active": most_active},
         "sentiment": sentiment,
         "events": events,
         "macro": macro_data,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     })
+
+def _fallback_scanner_items(symbols: list[str] | None, limit: int):
+    universe = symbols or [
+        "NVDA", "AMD", "AVGO", "MSFT", "AAPL", "GOOGL", "META", "AMZN", "TSLA",
+        "CRWD", "PANW", "NET", "DDOG", "NOW", "SHOP", "MSTR", "COIN", "LLY",
+        "JPM", "XOM",
+    ]
+    items = []
+    for symbol in universe[: max(limit * 2, limit)]:
+        try:
+            analysis = _analysis_payload(symbol, "3mo", "1d")
+        except Exception:
+            continue
+        price = _num(analysis.get("price"))
+        change_pct = _num(analysis.get("change_pct"))
+        volume_ratio = _num(analysis.get("volume_ratio"))
+        rsi = _num(analysis.get("rsi"))
+        sma20 = _num(analysis.get("sma_20"))
+        sma50 = _num(analysis.get("sma_50"))
+        score_parts = [
+            20 if change_pct and change_pct > 0 else 0,
+            20 if volume_ratio and volume_ratio >= 1.4 else 0,
+            20 if price and sma20 and price > sma20 else 0,
+            20 if sma20 and sma50 and sma20 > sma50 else 0,
+            20 if rsi and 45 <= rsi <= 75 else 0,
+        ]
+        score = sum(score_parts)
+        confirmation = []
+        if price and sma20 and price > sma20:
+            confirmation.append(f"Price above 20-day average ({sma20:.2f}).")
+        if volume_ratio and volume_ratio >= 1.4:
+            confirmation.append(f"Volume running {volume_ratio:.2f}x recent average.")
+        if rsi and 45 <= rsi <= 75:
+            confirmation.append(f"RSI is in tradable range ({rsi:.1f}).")
+        risk_watch = []
+        if rsi and rsi > 75:
+            risk_watch.append(f"RSI elevated ({rsi:.1f}).")
+        if price and sma20 and price < sma20:
+            risk_watch.append(f"Price below 20-day average ({sma20:.2f}).")
+        items.append({
+            "ticker": symbol,
+            "sector": None,
+            "signal": "LONG" if score >= 60 else "WAIT",
+            "score": score,
+            "price": price,
+            "change_pct": change_pct,
+            "estimated_target_price": analysis.get("resistance"),
+            "estimated_bullish_timeframe": "Provider technical scan",
+            "risk_reward": None,
+            "why": confirmation,
+            "confirmation": confirmation,
+            "risk_watch": risk_watch,
+            "articles": [],
+        })
+    return sorted(items, key=lambda row: row.get("score") or 0, reverse=True)[:limit]
 
 def core_analysis(ticker: str, period: str = "1y"):
     df = history(ticker, period)
@@ -616,13 +712,16 @@ def market_trade_scanner(limit: int = 50, sector: str = "All"):
             "disclaimer": "Research signal only. This does not guarantee price movement.",
         })
     except Exception as e:
+        items = _fallback_scanner_items(selected, max(1, min(int(limit), 50)))
         return safe({
             "sector": sector,
             "sectors": list(SCANNER_SECTORS.keys()),
-            "universe_size": len(selected) if selected else 0,
-            "items": [],
-            "error": str(e),
+            "universe_size": len(selected) if selected else len(items),
+            "items": items,
+            "engine_error": str(e),
             "updated_at": datetime.now(timezone.utc).isoformat(),
+            "method": "Ranks provider-returned chart data when the scanner engine is unavailable.",
+            "disclaimer": "Research signal only. This does not guarantee price movement.",
         })
 
 @app.get("/api/v1/market/geopolitics")
