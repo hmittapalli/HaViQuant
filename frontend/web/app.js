@@ -372,8 +372,9 @@ function topMovers() {
     change: first(item.change_pct, item.changePercent, item.percent_change),
     sector: first(item.sector, item.industry),
   })).filter((item) => hasValue(item.symbol));
-  return `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><button class="${state.moverMode === "Gainers" ? "active" : ""}" data-mover-mode="Gainers">Gainers</button><button class="${state.moverMode === "Most Active" ? "active" : ""}" data-mover-mode="Most Active">Most Active</button>${items.length ? items.map((item) => `
-    <button data-mover="${esc(item.symbol)}" class="mover" data-tooltip="${esc(moverTooltip(item))}"><i>${esc(String(item.symbol).slice(0, 1))}</i><span>${esc(item.symbol)}</span><em class="${Number(item.change) < 0 ? "bad" : "good"}">${esc(formatDelta(item.change))}</em></button>`).join("") : `<span class="empty compact">No top movers returned by provider.</span>`}</footer>`;
+  if (!items.length) return "";
+  return `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><button class="${state.moverMode === "Gainers" ? "active" : ""}" data-mover-mode="Gainers">Gainers</button><button class="${state.moverMode === "Most Active" ? "active" : ""}" data-mover-mode="Most Active">Most Active</button>${items.map((item) => `
+    <button data-mover="${esc(item.symbol)}" class="mover" data-tooltip="${esc(moverTooltip(item))}"><i>${esc(String(item.symbol).slice(0, 1))}</i><span>${esc(item.symbol)}</span><em class="${Number(item.change) < 0 ? "bad" : "good"}">${esc(formatDelta(item.change))}</em></button>`).join("")}</footer>`;
 }
 
 function moverTooltip(item) {
@@ -549,16 +550,17 @@ function tradingDesk() {
   const change = Number(a.change_pct);
   const stats = sessionStats();
   const cap = marketCap();
+  const capMetric = cap !== "Not returned" ? `<div class="range"><label>Market Cap</label><b>${esc(cap)}</b><small>Provider field</small></div>` : "";
+  const classification = [profile.sector, profile.industry].filter(hasValue).join(" - ");
   return `
     <div class="desk">
       <section class="chart-zone">
         <div class="quote-head">
-          <div><h1>${esc(state.ticker)}</h1><span>${esc(displayValue(profile.name, state.ticker))}</span><small>${esc([profile.sector, profile.industry].filter(hasValue).join(" - ") || "Company classification not returned")}</small></div>
+          <div><h1>${esc(state.ticker)}</h1><span>${esc(displayValue(profile.name, state.ticker))}</span>${classification ? `<small>${esc(classification)}</small>` : ""}</div>
           <div class="price-block"><strong>${money(price)}</strong><em class="${change < 0 ? "bad" : "good"}">${signedPct(change)}</em><small>Real-time</small></div>
           <div class="range"><label>Session Range</label><b title="Computed from returned intraday candle high/low values">${esc(stats.range)}</b><small>From live candles</small></div>
           <div class="range"><label>Session Volume</label><b>${esc(stats.volume)}</b><small>${num(a.volume_ratio)}x Avg</small></div>
-          <div class="range"><label>Market Cap</label><b>${esc(displayValue(cap))}</b><small>Provider field</small></div>
-          <button class="watch">In Watchlist</button>
+          ${capMetric}
         </div>
         ${chartPanel()}
         <div class="lower-grid">
@@ -591,7 +593,6 @@ function chartPanel() {
     <div class="chart-stats">
       <div><span>Session Range</span><b>${esc(sessionStats().range)}</b></div>
       <div><span>Session Volume</span><b>${esc(sessionStats().volume)}</b><em>${hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x Avg` : "Volume ratio not returned"}</em></div>
-      <div><span>Market Cap</span><b>${esc(displayValue(marketCap()))}</b></div>
       <div><span>Active Tool</span><b>${esc(state.chartTool)}</b><em>${esc(toolStatusText())}</em></div>
     </div>
     <div class="chart-shell">
@@ -640,10 +641,10 @@ function setupPanel() {
   const macdState = Number.isFinite(Number(a.macd)) && Number.isFinite(Number(a.macd_signal))
     ? (Number(a.macd) >= Number(a.macd_signal) ? "Bullish" : "Bearish")
     : "Not returned";
+  const detailRows = rows({Trend: a.trend, Momentum: a.momentum, Volume: hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x` : null, VWAP: vwapState, "RSI (14)": hasValue(a.rsi) ? num(a.rsi) : null, MACD: macdState});
   return card("Trade Setup", `
     <div class="setup-title"><div><strong>${esc(signal)} SETUP</strong><span>${signal === "BUY" ? "High Probability" : "Await confirmation"}</span></div><b>${hasValue(a.setup_quality) ? num(a.setup_quality, 0) : "-"}<small>/100</small></b></div>
-    ${rows({Trend: a.trend, Momentum: a.momentum, Volume: hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x` : null, VWAP: vwapState, "RSI (14)": hasValue(a.rsi) ? num(a.rsi) : null, MACD: macdState})}
-    <div class="stars">★★★★☆</div>
+    ${detailRows}
   `);
 }
 
@@ -659,12 +660,13 @@ function contextPanel() {
     "Market Regime": first(state.macro?.market_regime, sentiment.market_regime, a.trend, state.macro?.regime),
     Liquidity: first(a.liquidity, a.market_context?.liquidity, hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x Avg Volume` : null),
   };
-  return card("Market Context", rows(context));
+  const filtered = Object.fromEntries(Object.entries(context).filter(([, value]) => hasValue(value)));
+  return Object.keys(filtered).length ? card("Market Context", rows(filtered)) : "";
 }
 
 function whyPanel() {
   const a = state.analysis || {};
-  return card("Why This Trade?", `<p class="small-copy">${esc(a.pattern?.description || "The setup is monitored using price structure, volume, RSI, trend and validated support/resistance levels. Wait for confirmation before acting.")}</p>`);
+  return a.pattern?.description ? card("Why This Trade?", `<p class="small-copy">${esc(a.pattern.description)}</p>`) : "";
 }
 
 function tradePlanPanel() {
@@ -688,15 +690,16 @@ function tradePlanPanel() {
 function patternPanel() {
   const a = state.analysis || {};
   const pattern = a.pattern || {};
+  if (!hasValue(pattern.name) && !hasValue(pattern.description)) return "";
   return card("Pattern Details", `
-    <div class="pattern-name">${esc(pattern.name || "Pattern monitoring")}</div>
-    <p class="small-copy">${esc(pattern.description || "No single high-confidence candle pattern dominates. Continue watching trend, volume and support/resistance confirmation.")}</p>
+    ${pattern.name ? `<div class="pattern-name">${esc(pattern.name)}</div>` : ""}
+    ${pattern.description ? `<p class="small-copy">${esc(pattern.description)}</p>` : ""}
     ${rows({
-      Confidence: pattern.confidence != null ? `${num(pattern.confidence, 0)}%` : "-",
-      Trend: a.trend || "-",
-      Momentum: a.momentum || "-",
-      Volatility: a.volatility || "-",
-      Invalidation: `Below ${money(a.levels?.stop)}`,
+      Confidence: pattern.confidence != null ? `${num(pattern.confidence, 0)}%` : null,
+      Trend: a.trend,
+      Momentum: a.momentum,
+      Volatility: a.volatility,
+      Invalidation: hasValue(a.levels?.stop) ? `Below ${money(a.levels?.stop)}` : null,
     })}
   `);
 }
@@ -709,13 +712,15 @@ function livePricePanel() {
 function aiPanel() {
   const a = state.analysis || {};
   const probability = first(a.probability_of_continuation, a.continuation_probability, a.setup_quality);
+  const insights = [
+    hasValue(probability) ? `Probability of continuation: ${num(probability, 0)}%` : null,
+    hasValue(a.levels?.stop) ? `Key support level: ${money(a.levels.stop)}` : null,
+    hasValue(a.levels?.target1) ? `Key resistance level: ${money(a.levels.target1)}` : null,
+    a.ai_summary,
+  ].filter(hasValue);
+  if (!insights.length) return "";
   return card("AI Insight Summary", `
-    <ul class="ai-list">
-      <li>Probability of continuation: ${hasValue(probability) ? `${num(probability, 0)}%` : "Not returned"}</li>
-      <li>Key support level: ${money(a.levels?.stop)}</li>
-      <li>Key resistance level: ${money(a.levels?.target1)}</li>
-      <li>Watch volume around key levels</li>
-    </ul>
+    <ul class="ai-list">${insights.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>
   `);
 }
 
@@ -917,9 +922,10 @@ function fundamentalModule() {
   const revenueGrowth = first(f.growth?.revenue_growth, f.revenueGrowth, state.company?.profile?.revenue_growth);
   const profitMargin = first(f.profitMargins, f.profit_margin, state.company?.profile?.profit_margin);
   const roe = first(f.returnOnEquity, f.roe, state.company?.profile?.roe);
+  const cap = firstPositiveNumber(p.market_cap, p.marketCap, f.marketCap, f.market_cap, state.company?.profile?.market_cap, state.company?.profile?.marketCap);
   const metrics = [
     ["Company Score", hasValue(first(f.scores?.fundamental_score, companyScores.overall_company_score)) ? num(first(f.scores?.fundamental_score, companyScores.overall_company_score), 1) : null],
-    ["Market Cap", first(p.market_cap, p.marketCap, f.marketCap, f.market_cap, state.company?.profile?.market_cap, state.company?.profile?.marketCap) ? money(first(p.market_cap, p.marketCap, f.marketCap, f.market_cap, state.company?.profile?.market_cap, state.company?.profile?.marketCap)) : null],
+    ["Market Cap", cap ? money(cap) : null],
     ["P/E", hasValue(first(v.trailing_pe, p.trailing_pe, f.trailingPE, f.trailing_pe, state.company?.profile?.trailing_pe)) ? num(first(v.trailing_pe, p.trailing_pe, f.trailingPE, f.trailing_pe, state.company?.profile?.trailing_pe)) : null],
     ["Forward P/E", hasValue(first(v.forward_pe, p.forward_pe, f.forwardPE, f.forward_pe)) ? num(first(v.forward_pe, p.forward_pe, f.forwardPE, f.forward_pe)) : null],
     ["Revenue Growth", hasValue(revenueGrowth) ? pct(Number(revenueGrowth) * (Math.abs(Number(revenueGrowth)) <= 1 ? 100 : 1)) : null],
@@ -996,8 +1002,8 @@ function tradeScannerPage() {
     </section>
     <section class="scanner-actions">
       <button id="runScanner" class="scanner-primary">${state.scannerLoading ? "Scanning..." : "Scan World News + Setups"}</button>
-      <div><b>${esc(data.universe_size || "50")}</b><span>symbols checked</span></div>
-      <div><b>Top ${items.length || 50}</b><span>ranked opportunities</span></div>
+      <div><b>${hasValue(data.universe_size) ? esc(data.universe_size) : "-"}</b><span>symbols checked</span></div>
+      <div><b>${items.length ? `Top ${items.length}` : "-"}</b><span>ranked opportunities</span></div>
       <div><b>${esc(data.sector || state.scannerSector)}</b><span>selected sector</span></div>
       <div><b>${data.updated_at ? esc(new Date(data.updated_at).toLocaleTimeString()) : "-"}</b><span>last scan</span></div>
     </section>
@@ -1007,7 +1013,7 @@ function tradeScannerPage() {
     <div class="scanner-grid">
       ${items.length ? items.map(scannerCard).join("") : `<div class="empty">Run the scanner to find catalyst-driven watchlist candidates.</div>`}
     </div>
-    ${card("Scanner Method", `<p class="small-copy">${esc(data.method || "Ranks symbols by recent catalyst headlines, technical setup, momentum, volume expansion, and positive event language.")}</p><p class="small-copy">${esc(data.disclaimer || "Research signal only. This does not guarantee that the stock price will rise.")}</p>`)}
+    ${data.method || data.disclaimer ? card("Scanner Method", `<p class="small-copy">${esc(data.method || "")}</p><p class="small-copy">${esc(data.disclaimer || "")}</p>`) : ""}
   `;
 }
 
@@ -1074,15 +1080,15 @@ function scannerCard(item, index) {
     <div class="confidence"><i style="width:${Math.max(0, Math.min(100, score))}%"></i></div>
     <section class="scanner-thesis">
       <b>Why it can go up</b>
-      <p>${esc(item.upside_thesis || why[0] || "The scanner found an early watchlist setup, but needs confirmation.")}</p>
+      <p>${esc(item.upside_thesis || why[0] || "Provider did not return a catalyst thesis.")}</p>
     </section>
     <div class="scanner-detail">
       <div><b>Confirm</b>${confirms.map((x) => `<span>${esc(x)}</span>`).join("")}</div>
       <div><b>Risk</b>${risks.map((x) => `<span>${esc(x)}</span>`).join("")}</div>
     </div>
     <div class="scanner-next">
-      <b>Approx Bullish Timeframe</b><span>${esc(item.estimated_bullish_timeframe || "Needs confirmation first")}</span>
-      <b>Next Announcement / Product Progress</b><span>${esc(item.next_announcement_watch?.summary || item.product_progress_watch || "Watch next company update, product launch, filing, or earnings call.")}</span>
+      <b>Approx Bullish Timeframe</b><span>${esc(item.estimated_bullish_timeframe || "Not returned")}</span>
+      <b>Next Announcement / Product Progress</b><span>${esc(item.next_announcement_watch?.summary || item.product_progress_watch || "Not returned")}</span>
     </div>
     <ul>${why.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
     <div class="scanner-news">${articles.map((a) => `<a href="${esc(a.url || "#")}" target="_blank" rel="noreferrer">${esc(a.title || "Market headline")}</a>`).join("")}</div>

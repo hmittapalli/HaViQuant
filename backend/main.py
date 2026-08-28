@@ -565,9 +565,9 @@ def rss_search(query, limit=8):
 
 
 INDEX_SYMBOLS = [
-    ("S&P 500", "^GSPC"),
-    ("NASDAQ", "^IXIC"),
-    ("DOW", "^DJI"),
+    ("S&P 500", "SPY"),
+    ("NASDAQ", "QQQ"),
+    ("DOW", "DIA"),
     ("VIX", "^VIX"),
 ]
 
