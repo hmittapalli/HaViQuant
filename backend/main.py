@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import math
 import traceback
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
@@ -26,6 +29,7 @@ from app.data.news_data import fetch_ticker_news
 from app.analysis.technical_analysis import TechnicalAnalysisEngine
 from app.analysis.decision_engine import DecisionEngine
 from app.company.intelligence_engine import build_company_intelligence
+from app.market_intelligence import scan_opportunities, macro_snapshot
 from app.portfolio.portfolio_intelligence import (
     portfolio_rows, portfolio_doctor, analyze_ticker
 )
@@ -47,7 +51,27 @@ market = MarketDataService()
 technical_engine = TechnicalAnalysisEngine()
 decision_engine = DecisionEngine()
 
-PERIOD_RE = "^(1d|5d|1mo|3mo|6mo|1y|2y|5y|max)$"
+PERIOD_RE = "^(1d|5d|7d|1mo|3mo|6mo|60d|1y|2y|5y|10y|max)$"
+INTERVAL_RE = "^(1m|2m|5m|15m|30m|60m|90m|1h|1d|5d|1wk|1mo|3mo)$"
+MARKET_TAPE = {
+    "S&P 500": "SPY",
+    "NASDAQ": "QQQ",
+    "DOW": "DIA",
+    "VIX": "^VIX",
+}
+SCANNER_SECTORS = {
+    "All": None,
+    "AI / Semiconductors": ["NVDA", "AMD", "AVGO", "ARM", "MU", "TSM", "SMCI", "QCOM", "INTC"],
+    "Software / Cloud": ["MSFT", "GOOGL", "META", "SNOW", "CRWD", "PANW", "NET", "DDOG", "NOW", "CRM"],
+    "Biotech / Healthcare": ["MRNA", "PFE", "LLY", "NVO", "UNH", "VRTX", "REGN", "BIIB", "GILD", "BMY", "MRK"],
+    "Space / Defense": ["RKLB", "BA", "LMT", "RTX", "NOC", "GE"],
+    "EV / Mobility": ["TSLA", "RIVN", "LCID", "UBER", "ABNB", "CCL", "NCLH"],
+    "Crypto / Fintech": ["COIN", "MARA", "RIOT", "HOOD", "SOFI", "AFRM", "UPST", "PYPL", "MSTR"],
+    "Energy / Commodities": ["XOM", "CVX", "OXY", "URA", "CCJ", "FCX", "NEM", "SLV", "GLD", "XLE"],
+    "Consumer / Internet": ["AMZN", "NFLX", "SHOP", "ROKU", "RBLX", "BABA", "PDD", "SE", "MELI"],
+    "Financials": ["JPM", "GS", "XLF", "SQ", "PYPL", "HOOD", "SOFI"],
+    "ETFs / Macro": ["SPY", "QQQ", "IWM", "TLT", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV"],
+}
 
 def safe(v: Any):
     if v is None:
@@ -87,6 +111,272 @@ def rows_from_df(df):
         }
         for i, r in df.iterrows()
     ])
+
+def _num(value: Any):
+    try:
+        if value is None:
+            return None
+        n = float(value)
+        return n if math.isfinite(n) else None
+    except Exception:
+        return None
+
+def _first(*values):
+    for value in values:
+        if value not in (None, "", "N/A", "-"):
+            return value
+    return None
+
+def _json_get(url: str):
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 HaViQuant/1.0",
+            "Accept": "application/json,text/plain,*/*",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=8) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def _yahoo_summary(ticker: str) -> Dict[str, Any]:
+    modules = ",".join([
+        "price",
+        "summaryDetail",
+        "defaultKeyStatistics",
+        "financialData",
+        "assetProfile",
+    ])
+    url = (
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+        f"{urllib.parse.quote(ticker.upper())}?modules={modules}"
+    )
+    try:
+        data = _json_get(url)
+        result = ((data.get("quoteSummary") or {}).get("result") or [{}])[0]
+        price = result.get("price") or {}
+        detail = result.get("summaryDetail") or {}
+        stats = result.get("defaultKeyStatistics") or {}
+        financial = result.get("financialData") or {}
+        profile = result.get("assetProfile") or {}
+        value = lambda obj, key: ((obj.get(key) or {}).get("raw") if isinstance(obj.get(key), dict) else obj.get(key))
+        return {
+            "name": _first(price.get("longName"), price.get("shortName")),
+            "sector": profile.get("sector"),
+            "industry": profile.get("industry"),
+            "employees": _num(profile.get("fullTimeEmployees")),
+            "description": profile.get("longBusinessSummary"),
+            "market_cap": _num(value(price, "marketCap") or value(stats, "marketCap")),
+            "shares_outstanding": _num(value(stats, "sharesOutstanding")),
+            "trailing_pe": _num(value(detail, "trailingPE")),
+            "forward_pe": _num(value(stats, "forwardPE")),
+            "profit_margin": _num(value(financial, "profitMargins")),
+            "roe": _num(value(financial, "returnOnEquity")),
+            "revenue_growth": _num(value(financial, "revenueGrowth")),
+            "beta": _num(value(stats, "beta")),
+            "dividend_yield": _num(value(detail, "dividendYield")),
+            "trailing_eps": _num(value(stats, "trailingEps")),
+            "source": "Yahoo Finance quoteSummary",
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+def _history_with_interval(ticker: str, period: str, interval: str):
+    try:
+        import yfinance as yf
+        df = yf.Ticker(ticker).history(period=period, interval=interval, auto_adjust=False)
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        pass
+    return history(ticker, "1y" if period not in {"1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"} else period)
+
+def _sma(series, window: int):
+    return _num(series.tail(window).mean()) if len(series) >= window else None
+
+def _rsi(close, window: int = 14):
+    if len(close) <= window:
+        return None
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(window).mean()
+    loss = -delta.clip(upper=0).rolling(window).mean()
+    rs = gain / loss.replace(0, np.nan)
+    return _num((100 - (100 / (1 + rs))).iloc[-1])
+
+def _analysis_payload(ticker: str, period: str, interval: str, include_mtf: bool = False):
+    df = _history_with_interval(ticker, period, interval)
+    if df is None or df.empty:
+        raise ValueError(f"No market data found for {ticker}.")
+    df = df.dropna(subset=["Open", "High", "Low", "Close"]).sort_index()
+    close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+    volume = pd.to_numeric(df["Volume"], errors="coerce").fillna(0)
+    quote_data = {}
+    try:
+        quote_data = get_live_quote(ticker)
+    except Exception:
+        quote_data = {}
+    price = _first(_num(quote_data.get("price")), _num(close.iloc[-1]))
+    previous = _first(_num(quote_data.get("previous")), _num(close.iloc[-2]) if len(close) > 1 else None)
+    change_pct = _first(_num(quote_data.get("change_pct")), ((price / previous - 1) * 100 if price and previous else None))
+    typical = (pd.to_numeric(df["High"], errors="coerce") + pd.to_numeric(df["Low"], errors="coerce") + pd.to_numeric(df["Close"], errors="coerce")) / 3
+    recent_volume = volume.tail(78)
+    recent_typical = typical.tail(78)
+    vwap = _num((recent_typical * recent_volume).sum() / recent_volume.sum()) if recent_volume.sum() else None
+    sma20 = _sma(close, 20)
+    sma50 = _sma(close, 50)
+    sma200 = _sma(close, 200)
+    vol_avg = _num(volume.tail(60).mean())
+    vol_last = _num(volume.iloc[-1])
+    volume_ratio = vol_last / vol_avg if vol_last and vol_avg else None
+    support = _num(pd.to_numeric(df["Low"], errors="coerce").tail(40).min())
+    resistance = _num(pd.to_numeric(df["High"], errors="coerce").tail(40).max())
+    tech = {}
+    dec = {}
+    try:
+        tech = technical_engine.analyze(df)
+        dec = decision_engine.evaluate(tech)
+    except Exception:
+        pass
+    signal = _first(dec.get("signal"), "WAIT" if price and sma20 else None)
+    setup_quality = _first(_num(dec.get("score")), _num(dec.get("technical_score")))
+    levels = {
+        "entry": price,
+        "stop": support,
+        "target1": resistance,
+        "target2": (price + (resistance - support)) if price and support and resistance and resistance > support else None,
+    }
+    return safe({
+        "ticker": ticker.upper(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "quote": quote_data,
+        "price": price,
+        "previous": previous,
+        "change_pct": change_pct,
+        "candles": rows_from_df(df.tail(220)),
+        "sma_20": _first(tech.get("sma_20"), tech.get("sma20"), sma20),
+        "sma_50": _first(tech.get("sma_50"), tech.get("sma50"), sma50),
+        "sma_200": _first(tech.get("sma_200"), tech.get("sma200"), sma200),
+        "vwap": _first(tech.get("vwap"), vwap),
+        "volume": vol_last,
+        "volume_ratio": _first(tech.get("volume_ratio"), tech.get("volumeRatio"), volume_ratio),
+        "rsi": _first(tech.get("rsi"), tech.get("RSI"), _rsi(close)),
+        "macd": tech.get("macd"),
+        "macd_signal": tech.get("macd_signal"),
+        "atr": tech.get("atr"),
+        "trend": _first(tech.get("trend"), dec.get("trend")),
+        "momentum": _first(tech.get("momentum"), dec.get("momentum")),
+        "signal": signal,
+        "setup_quality": setup_quality,
+        "support": support,
+        "resistance": resistance,
+        "levels": levels,
+        "mtf": [] if include_mtf else None,
+    })
+
+def _fundamental_payload(ticker: str, error: Optional[str] = None):
+    summary = _yahoo_summary(ticker)
+    quote_data = {}
+    try:
+        quote_data = get_live_quote(ticker)
+    except Exception:
+        pass
+    price = _num(quote_data.get("price"))
+    shares = _num(summary.get("shares_outstanding"))
+    market_cap = _first(_num(summary.get("market_cap")), price * shares if price and shares else None)
+    return safe({
+        "ticker": ticker.upper(),
+        "provider_status": "PARTIAL" if error else "OK",
+        "provider_error": error,
+        "live_quote": quote_data,
+        "profile": {
+            "name": summary.get("name"),
+            "sector": summary.get("sector"),
+            "industry": summary.get("industry"),
+            "employees": summary.get("employees"),
+            "description": summary.get("description"),
+            "market_cap": market_cap,
+            "trailing_pe": summary.get("trailing_pe"),
+            "forward_pe": summary.get("forward_pe"),
+            "profit_margin": summary.get("profit_margin"),
+            "roe": summary.get("roe"),
+            "revenue_growth": summary.get("revenue_growth"),
+        },
+        "valuation": {
+            "trailing_pe": summary.get("trailing_pe"),
+            "forward_pe": summary.get("forward_pe"),
+        },
+        "growth": {
+            "revenue_growth": summary.get("revenue_growth"),
+        },
+        "profitability": {
+            "profit_margin": summary.get("profit_margin"),
+            "roe": summary.get("roe"),
+        },
+        "earnings": {
+            "trailing_eps": summary.get("trailing_eps"),
+        },
+        "beta": summary.get("beta"),
+        "dividend_yield": summary.get("dividend_yield"),
+        "source": summary.get("source") if summary.get("market_cap") else None,
+    })
+
+def _quote_row(symbol: str, label: str | None = None):
+    try:
+        quote_data = get_live_quote(symbol)
+        price = _num(quote_data.get("price"))
+        if price is None:
+            return None
+        return {
+            "symbol": label or symbol,
+            "ticker": symbol,
+            "price": price,
+            "change_pct": _num(quote_data.get("change_pct")),
+            "source": quote_data.get("source"),
+        }
+    except Exception:
+        return None
+
+def _market_macro_payload(ticker: str):
+    tape = [row for label, symbol in MARKET_TAPE.items() if (row := _quote_row(symbol, label))]
+    quoted = _quote_row(ticker.upper())
+    universe = ["NVDA", "AMD", "AVGO", "MSFT", "AAPL", "GOOGL", "META", "AMZN", "TSLA", "CRWD", "PANW", "NOW"]
+    movers = [row for symbol in universe if (row := _quote_row(symbol))]
+    gainers = sorted(
+        [row for row in movers if row.get("change_pct") is not None],
+        key=lambda row: row["change_pct"],
+        reverse=True,
+    )[:12]
+    most_active = gainers
+    scores = [row["change_pct"] for row in tape if row.get("change_pct") is not None]
+    avg = sum(scores) / len(scores) if scores else None
+    sentiment = None
+    if avg is not None:
+        sentiment = {
+            "score": max(0, min(100, 50 + avg * 8)),
+            "label": "Bullish" if avg > 0.35 else "Bearish" if avg < -0.35 else "Mixed",
+            "bullish_pct": 100 if avg > 0 else 0,
+            "neutral_pct": 100 if abs(avg) <= 0.35 else 0,
+            "bearish_pct": 100 if avg < 0 else 0,
+        }
+    events = []
+    try:
+        events = fetch_ticker_news(ticker, 12)
+    except Exception:
+        pass
+    macro_data = {}
+    try:
+        macro_data = macro_snapshot()
+    except Exception:
+        pass
+    return safe({
+        "ticker": ticker.upper(),
+        "quote": quoted,
+        "market_indices": tape,
+        "top_movers": {"gainers": gainers, "most_active": most_active},
+        "sentiment": sentiment,
+        "events": events,
+        "macro": macro_data,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
 
 def core_analysis(ticker: str, period: str = "1y"):
     df = history(ticker, period)
@@ -202,7 +492,7 @@ def fundamental(ticker: str, quarters: int = 10):
             "sources": result.get("sources"),
         })
     except Exception as e:
-        raise HTTPException(502, str(e))
+        return _fundamental_payload(ticker, str(e))
 
 @app.get("/api/v1/decision/{ticker}")
 def decision(ticker: str):
@@ -231,7 +521,11 @@ def company(ticker: str, quarters: int = 10):
     try:
         return safe(build_company_intelligence(ticker, quarters=quarters))
     except Exception as e:
-        raise HTTPException(502, str(e))
+        return _fundamental_payload(ticker, str(e))
+
+@app.get("/api/v1/company-intelligence/{ticker}")
+def company_intelligence_alias(ticker: str, quarters: int = 10):
+    return company(ticker, quarters)
 
 @app.get("/api/v1/news/{ticker}")
 def news(ticker: str, limit: int = 12):
@@ -242,6 +536,117 @@ def news(ticker: str, limit: int = 12):
         }
     except Exception as e:
         return {"ticker": ticker.upper(), "items": [], "error": str(e)}
+
+@app.get("/api/v1/market/news")
+def market_news(ticker: str = "NVDA", limit: int = 12):
+    return news(ticker, limit)
+
+@app.get("/api/v1/market/analysis")
+def market_analysis(
+    ticker: str = "NVDA",
+    period: str = Query("60d", pattern=PERIOD_RE),
+    interval: str = Query("5m", pattern=INTERVAL_RE),
+    include_mtf: bool = False,
+):
+    try:
+        return _analysis_payload(ticker.strip().upper(), period, interval, include_mtf)
+    except Exception as e:
+        raise HTTPException(502, str(e))
+
+@app.get("/api/v1/market/macro")
+def market_macro(ticker: str = "NVDA"):
+    return _market_macro_payload(ticker)
+
+@app.get("/api/v1/market/insiders")
+def market_insiders(ticker: str = "NVDA"):
+    try:
+        result = build_company_intelligence(ticker, quarters=4)
+        stock_level = result.get("stock_level") or {}
+        holders = []
+        for key in [
+            "insidersPercentHeld",
+            "institutionsPercentHeld",
+            "institutionsFloatPercentHeld",
+            "institutionsCount",
+        ]:
+            if stock_level.get(key) is not None:
+                holders.append({"label": key, "value": stock_level.get(key)})
+        return safe({"ticker": ticker.upper(), "items": [], "holders": holders})
+    except Exception as e:
+        return {"ticker": ticker.upper(), "items": [], "holders": [], "error": str(e)}
+
+@app.get("/api/v1/market/trade-scanner")
+def market_trade_scanner(limit: int = 50, sector: str = "All"):
+    selected = SCANNER_SECTORS.get(sector) or SCANNER_SECTORS["All"]
+    try:
+        results = scan_opportunities(universe=selected, limit=max(1, min(int(limit), 50)))
+        items = []
+        for row in results:
+            if row.get("error"):
+                continue
+            plan = row.get("trade_plan") or {}
+            items.append({
+                "ticker": row.get("ticker"),
+                "sector": row.get("sector"),
+                "signal": row.get("signal"),
+                "score": row.get("score"),
+                "price": row.get("price"),
+                "change_pct": row.get("change_pct"),
+                "estimated_target_price": plan.get("target"),
+                "estimated_bullish_timeframe": plan.get("timeframe"),
+                "risk_reward": row.get("risk_reward"),
+                "why": [
+                    value for value in [
+                        f"Technical score {row.get('technical_score'):.0f}" if row.get("technical_score") is not None else None,
+                        f"Historical win rate {row.get('historical_win_rate'):.1f}%" if row.get("historical_win_rate") is not None else None,
+                        f"Risk/reward {row.get('risk_reward'):.2f}" if row.get("risk_reward") is not None else None,
+                    ] if value
+                ],
+                "confirmation": [],
+                "risk_watch": [],
+                "articles": [],
+            })
+        return safe({
+            "sector": sector,
+            "sectors": list(SCANNER_SECTORS.keys()),
+            "universe_size": len(selected) if selected else len(results),
+            "items": items,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "method": "Ranks provider-returned symbols with the existing technical and decision engines.",
+            "disclaimer": "Research signal only. This does not guarantee price movement.",
+        })
+    except Exception as e:
+        return safe({
+            "sector": sector,
+            "sectors": list(SCANNER_SECTORS.keys()),
+            "universe_size": len(selected) if selected else 0,
+            "items": [],
+            "error": str(e),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+@app.get("/api/v1/market/geopolitics")
+def market_geopolitics(limit: int = 8):
+    try:
+        items = fetch_ticker_news("SPY", max(1, min(int(limit), 20)))
+        return safe({
+            "items": [
+                {
+                    "theme": item.get("title"),
+                    "heat": (item.get("sentiment") or {}).get("score"),
+                    "why": item.get("summary"),
+                    "policy_details": [item],
+                    "benefiting_sectors": [],
+                    "pressured_sectors": [],
+                    "stocks_to_watch": [],
+                }
+                for item in items
+            ],
+            "method": "Provider news scan for policy, rates, macro and geopolitical headlines.",
+            "disclaimer": "Confirm policy impact with price, volume and official releases.",
+        })
+    except Exception as e:
+        return {"items": [], "error": str(e)}
 
 @app.get("/api/v1/evidence/{ticker}")
 def evidence(ticker: str, run: bool = False):
