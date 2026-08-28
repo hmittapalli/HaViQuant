@@ -19,7 +19,7 @@ except Exception:
     except Exception:
         get_company_intelligence = None
 
-APP_VERSION = "26.2.0"
+APP_VERSION = "26.3.0"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
