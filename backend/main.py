@@ -564,6 +564,150 @@ def rss_search(query, limit=8):
     except Exception: return []
 
 
+INDEX_SYMBOLS = [
+    ("S&P 500", "^GSPC"),
+    ("NASDAQ", "^IXIC"),
+    ("DOW", "^DJI"),
+    ("VIX", "^VIX"),
+]
+
+
+def latest_market_row(symbol, label=None):
+    try:
+        df = yf.download(symbol, period="5d", interval="1d", progress=False, auto_adjust=False, threads=False)
+    except Exception:
+        df = None
+    if df is None or df.empty:
+        fallback = quote_fallback_history(symbol)
+        df = fallback if fallback is not None else None
+    if df is None or df.empty:
+        return None
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    df = df.rename(columns={c: str(c).title().replace("Adj close", "Adj Close") for c in df.columns})
+    df = df.loc[:, ~df.columns.duplicated()]
+    df = df.dropna(subset=["Close"])
+    if df.empty:
+        return None
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+    def scalar(value):
+        if isinstance(value, pd.Series):
+            value = value.dropna().iloc[0] if not value.dropna().empty else None
+        return value
+    price_value = scalar(last.Close)
+    prev_value = scalar(prev.Close)
+    if price_value is None or pd.isna(price_value):
+        return None
+    price = float(price_value)
+    prev_close = float(prev_value) if prev_value is not None and pd.notna(prev_value) and float(prev_value) else price
+    volume_value = scalar(last.Volume) if "Volume" in df.columns else None
+    volume = int(volume_value) if volume_value is not None and pd.notna(volume_value) else None
+    avg_volume = None
+    if "Volume" in df.columns:
+        values = [float(x) for x in df.Volume.tail(5).tolist() if pd.notna(x) and float(x) > 0]
+        avg_volume = statistics.mean(values) if values else None
+    return clean({
+        "symbol": label or symbol,
+        "ticker": symbol,
+        "price": price,
+        "change_pct": ((price / prev_close) - 1) * 100 if prev_close else None,
+        "volume": volume,
+        "avg_volume": avg_volume,
+        "relative_volume": (volume / avg_volume) if volume and avg_volume else None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "source": "Yahoo Finance via yfinance",
+    })
+
+
+def market_indices():
+    rows = []
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(latest_market_row, symbol, label): label for label, symbol in INDEX_SYMBOLS}
+        for f in as_completed(futures):
+            item = f.result()
+            if item:
+                rows.append(item)
+    order = {label: idx for idx, (label, _) in enumerate(INDEX_SYMBOLS)}
+    rows.sort(key=lambda x: order.get(x.get("symbol"), 99))
+    return rows
+
+
+def market_movers(limit=12):
+    symbols = [s for s in SCAN_UNIVERSE if re.fullmatch(r"[A-Z0-9.\-]{1,12}", s)][:70]
+    rows = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(latest_market_row, symbol): symbol for symbol in symbols}
+        for f in as_completed(futures):
+            item = f.result()
+            if item and item.get("price") is not None and item.get("change_pct") is not None:
+                rows.append(item)
+    mode_rows = rows[:]
+    mode_rows.sort(key=lambda x: (abs(float(x.get("change_pct") or 0)), float(x.get("relative_volume") or 0)), reverse=True)
+    active_rows = rows[:]
+    active_rows.sort(key=lambda x: (float(x.get("relative_volume") or 0), float(x.get("volume") or 0)), reverse=True)
+    return clean({
+        "items": mode_rows[:max(1, min(30, int(limit)))],
+        "gainers": sorted(rows, key=lambda x: float(x.get("change_pct") or -999), reverse=True)[:max(1, min(30, int(limit)))],
+        "losers": sorted(rows, key=lambda x: float(x.get("change_pct") or 999))[:max(1, min(30, int(limit)))],
+        "most_active": active_rows[:max(1, min(30, int(limit)))],
+        "source": "Yahoo Finance via yfinance",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def market_sentiment(indices):
+    values = [float(x.get("change_pct")) for x in indices if x.get("symbol") != "VIX" and x.get("change_pct") is not None]
+    vix = next((x for x in indices if x.get("symbol") == "VIX"), {})
+    vix_change = float(vix.get("change_pct")) if vix.get("change_pct") is not None else 0
+    avg = statistics.mean(values) if values else 0
+    raw = 50 + (avg * 10) - (vix_change * 2)
+    score = round(max(0, min(100, raw)), 1)
+    label = "Bullish" if score >= 60 else ("Bearish" if score <= 40 else "Mixed")
+    positives = sum(1 for x in values if x > 0)
+    negatives = sum(1 for x in values if x < 0)
+    total = max(1, len(values))
+    return clean({
+        "score": score,
+        "label": label,
+        "market_regime": label,
+        "bullish_pct": round((positives / total) * 100, 1),
+        "bearish_pct": round((negatives / total) * 100, 1),
+        "neutral_pct": round(((total - positives - negatives) / total) * 100, 1),
+        "vix_change_pct": vix_change if vix else None,
+        "source": "Derived from provider index changes and VIX movement",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def macro_event_feed(ticker):
+    queries = [
+        (f"{ticker} earnings analyst rating product launch market catalyst", "Earnings"),
+        ("Federal Reserve rate decision inflation jobs GDP CPI PCE market impact", "Fed / Macro"),
+        ("US economic calendar CPI PCE GDP jobs report market impact", "Economic"),
+        ("markets geopolitics tariffs sanctions regulation stocks", "Geopolitical"),
+    ]
+    seen = set()
+    events = []
+    for query, category in queries:
+        for item in rss_search(query, 5):
+            title = item.get("title")
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            s = item.get("sentiment") or sentiment(title)
+            events.append(clean({
+                **item,
+                "category": category,
+                "impact": s.get("impact"),
+                "impact_label": s.get("impact"),
+                "status": "Linked source",
+                "source_name": item.get("publisher") or "News source",
+            }))
+    events.sort(key=lambda x: x.get("published_iso") or "", reverse=True)
+    return events[:16]
+
+
 def company_info(ticker):
     try:
         info=yf.Ticker(ticker).info or {}
@@ -572,10 +716,28 @@ def company_info(ticker):
 
 
 def fundamentals(ticker):
+    data = {"ticker": ticker, "source": "Yahoo Finance via yfinance"}
     try:
         info=yf.Ticker(ticker).info or {}
-        return clean({"ticker":ticker,"marketCap":info.get("marketCap"),"trailingPE":info.get("trailingPE"),"forwardPE":info.get("forwardPE"),"epsTrailingTwelveMonths":info.get("epsTrailingTwelveMonths"),"revenueGrowth":info.get("revenueGrowth"),"profitMargins":info.get("profitMargins"),"returnOnEquity":info.get("returnOnEquity"),"dividendYield":info.get("dividendYield"),"beta":info.get("beta")})
-    except Exception as e: return {"ticker":ticker,"error":str(e)}
+        data.update({
+            "marketCap":info.get("marketCap"),
+            "trailingPE":info.get("trailingPE"),
+            "forwardPE":info.get("forwardPE"),
+            "epsTrailingTwelveMonths":info.get("epsTrailingEps") or info.get("epsTrailingTwelveMonths"),
+            "revenueGrowth":info.get("revenueGrowth"),
+            "profitMargins":info.get("profitMargins"),
+            "returnOnEquity":info.get("returnOnEquity"),
+            "dividendYield":info.get("dividendYield"),
+            "beta":info.get("beta"),
+        })
+    except Exception as e:
+        data["primary_error"] = str(e)
+    try:
+        fast = yf.Ticker(ticker).fast_info or {}
+        data["marketCap"] = data.get("marketCap") or fast.get("market_cap")
+    except Exception:
+        pass
+    return clean(data)
 
 
 def insiders(ticker):
@@ -623,7 +785,25 @@ def market_news(ticker:str=Query(...)): return news(norm_ticker(ticker))
 
 @app.get("/api/v1/market/macro")
 def macro(ticker:str=Query(...)):
-    t=norm_ticker(ticker); return clean({"ticker":t,"geopolitical":rss_search(f"{t} geopolitics tariffs sanctions trade war international policy",6),"politics":rss_search(f"{t} politician speech policy regulation government",6),"macro":rss_search(f"{t} Federal Reserve rates inflation jobs economy",6),"note":"Headline/context signals only; they do not deterministically predict price."})
+    t=norm_ticker(ticker)
+    indices = market_indices()
+    movers = market_movers(14)
+    sent = market_sentiment(indices)
+    events = macro_event_feed(t)
+    return clean({
+        "ticker": t,
+        "market_indices": indices,
+        "top_movers": movers,
+        "sentiment": sent,
+        "market_regime": sent.get("market_regime"),
+        "vix_regime": "Elevated" if abs(float(sent.get("vix_change_pct") or 0)) >= 2 else "Normal",
+        "events": events,
+        "geopolitical": rss_search(f"{t} geopolitics tariffs sanctions trade war international policy",6),
+        "politics": rss_search(f"{t} politician speech policy regulation government",6),
+        "macro": rss_search(f"{t} Federal Reserve rates inflation jobs economy",6),
+        "sources": ["Yahoo Finance via yfinance", "Google News RSS"],
+        "note": "Market context is derived from linked provider data and headlines. It does not deterministically predict price.",
+    })
 
 @app.get("/api/v1/market/insiders")
 def market_insiders(ticker:str=Query(...)): return insiders(norm_ticker(ticker))

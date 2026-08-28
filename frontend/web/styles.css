@@ -18,7 +18,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 .terminal {
   display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
   background:
@@ -51,7 +51,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   color: white;
   font-weight: 950;
 }
-.brand strong { display: block; font-size: 21px; line-height: 1; }
+.brand strong { display: block; font-size: 20px; line-height: 1.05; }
 .brand em { color: #9b62ff; font-style: normal; }
 .brand small { display: block; color: #aab9c9; font-size: 11px; margin-top: 4px; }
 
@@ -65,7 +65,7 @@ nav button {
   border-radius: 7px;
   background: transparent;
   color: #c6d4e3;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 800;
   padding: 9px 11px;
   text-align: left;
@@ -97,13 +97,25 @@ nav button.active {
 
 .topbar {
   display: grid;
-  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: minmax(280px, 470px) minmax(300px, 1fr) auto;
+  gap: 8px;
   align-items: center;
   min-height: 56px;
   padding: 10px 16px;
   border-bottom: 1px solid #132338;
   background: #07101a;
+}
+.nav-group {
+  padding: 8px 0 10px;
+  border-bottom: 1px solid #132338;
+}
+.nav-group h4 {
+  margin: 0 0 6px;
+  color: #74879d;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
 }
 .searchbox {
   display: flex;
@@ -145,13 +157,13 @@ nav button.active {
 }
 .tape span {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) max-content;
   grid-template-rows: auto auto;
   align-items: center;
   column-gap: 8px;
   row-gap: 2px;
-  min-width: 148px;
-  max-width: 176px;
+  min-width: 170px;
+  max-width: 220px;
   border: 1px solid #19304a;
   border-radius: 7px;
   background: #0a1726;
@@ -162,7 +174,7 @@ nav button.active {
 }
 .tape b { color: white; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
 .tape strong {
-  grid-column: 1 / -1;
+  grid-column: 1 / 2;
   color: #dbe8f6;
   font-size: 12px;
   line-height: 1.1;
@@ -170,20 +182,25 @@ nav button.active {
   text-overflow: ellipsis;
 }
 .tape em {
+  grid-column: 2 / 3;
+  grid-row: 2 / 3;
   font-size: 11px;
   line-height: 1;
   text-align: right;
 }
 .good { color: #27e87d !important; }
 .bad { color: #ff5368 !important; }
-.tools { display: flex; align-items: center; gap: 14px; color: #dbe6f3; }
+.tools { display: flex; align-items: center; justify-content: flex-end; gap: 12px; color: #dbe6f3; min-width: 54px; }
+.tools svg { flex: 0 0 auto; width: 18px; height: 18px; }
 .user {
+  flex: 0 0 auto;
   border: 1px solid #1f354f;
   border-radius: 8px;
   background: #0a1726;
   padding: 7px 13px;
   font-weight: 900;
   font-size: 12px;
+  min-width: 82px;
 }
 .user span { display: block; color: #8aa0b8; font-size: 10px; font-weight: 600; }
 
@@ -240,6 +257,7 @@ nav button.active {
   box-shadow: 0 0 18px #ff536866;
 }
 .event-card.medium i { background: #f7c846; box-shadow: 0 0 18px #f7c84666; }
+.event-card.low i, .event-card.info i { background: #62dcff; box-shadow: 0 0 18px #62dcff66; }
 .event-card b {
   display: inline-block;
   color: #ff5f73;
@@ -249,6 +267,7 @@ nav button.active {
   margin-bottom: 2px;
 }
 .event-card.medium b { color: #f7c846; }
+.event-card.low b, .event-card.info b { color: #62dcff; }
 .event-card div {
   min-width: 0;
 }
@@ -320,7 +339,7 @@ nav button.active {
 
 .quote-head {
   display: grid;
-  grid-template-columns: minmax(190px, 1.1fr) minmax(120px, .55fr) repeat(3, minmax(145px, .65fr));
+  grid-template-columns: minmax(210px, 1.15fr) minmax(140px, .6fr) repeat(3, minmax(150px, .7fr));
   gap: 10px;
   align-items: stretch;
   border: 1px solid #1b4963;
@@ -366,7 +385,8 @@ nav button.active {
   margin-top: 6px;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .range small {
   display: block;
@@ -381,6 +401,7 @@ nav button.active {
   color: #c18bff;
   font-weight: 900;
   padding: 11px;
+  min-height: 50px;
 }
 
 .card {
@@ -498,6 +519,7 @@ nav button.active {
   color: #a7b8ca;
   font-size: 12px;
 }
+.indicator-list.muted em { color: #8fa3bb; }
 .indicator-list b { font-weight: 600; }
 .indicator-list em { color: #38e697; font-style: normal; }
 .chart {
@@ -759,6 +781,7 @@ nav button.active {
   margin-top: 8px;
   color: #eef5ff;
   font-size: 20px;
+  overflow-wrap: anywhere;
 }
 .module-hero {
   border: 1px solid #1b4963;
@@ -1276,6 +1299,40 @@ nav button.active {
   color: #ffd0c9;
   padding: 8px 12px;
 }
+.data-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #264968;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(13, 34, 53, .94), rgba(8, 18, 31, .94));
+  color: #9db1c7;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+}
+.data-notice b {
+  display: block;
+  color: #e7f2ff;
+  font-size: 13px;
+  margin-bottom: 3px;
+}
+.data-notice span, .data-notice small {
+  display: block;
+  color: #9db1c7;
+  font-size: 12px;
+  line-height: 1.35;
+}
+.data-notice small { color: #62c8f5; margin-top: 2px; }
+.data-notice button {
+  flex: 0 0 auto;
+  border: 1px solid #2e76a6;
+  border-radius: 7px;
+  background: #0d2940;
+  color: #8fe8ff;
+  font-weight: 900;
+  padding: 8px 14px;
+}
 
 .movers {
   display: flex;
@@ -1426,19 +1483,19 @@ nav button.active {
 }
 
 @media (max-width: 1200px) {
-  .terminal { grid-template-columns: 82px minmax(0, 1fr); }
+  .terminal { grid-template-columns: 78px minmax(0, 1fr); }
   .brand div, nav span, .sentiment-box.sidebar, .market-status { display: none; }
   .brandmark { width: 44px; height: 44px; }
   nav button { justify-content: center; }
   .desk { grid-template-columns: 1fr; }
   .right-rail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .quote-head { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .quote-head { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .quote-head > div:first-child { grid-column: span 2; }
   .scanner-grid { grid-template-columns: repeat(2, minmax(300px, 1fr)); }
   .scanner-controls { grid-template-columns: 1fr; }
   .geo-grid { grid-template-columns: 1fr; }
   .eventbar { overflow-x: auto; }
-  .topbar { grid-template-columns: 320px minmax(0, 1fr); }
+  .topbar { grid-template-columns: minmax(260px, 360px) minmax(0, 1fr); }
   .tools { display: none; }
 }
 
@@ -1447,12 +1504,51 @@ nav button.active {
   .terminal { display: block; height: auto; min-height: 100vh; }
   .sidebar { position: static; display: none; }
   .workspace { display: block; min-height: 100vh; }
-  .topbar { position: static; grid-template-columns: 1fr; overflow-x: auto; }
-  .eventbar { position: static; }
+  .topbar {
+    position: static;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 12px;
+    overflow: hidden;
+  }
+  .searchbox { min-height: 52px; }
+  .searchbox button { padding: 10px 14px; }
+  .tape {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(142px, 1fr);
+    gap: 8px;
+    overflow-x: auto;
+  }
+  .tape span {
+    min-width: 142px;
+    max-width: none;
+    padding: 8px 10px;
+  }
+  .eventbar {
+    position: static;
+    padding: 10px 12px;
+    scroll-snap-type: x proximity;
+  }
+  .event-intro, .event-card {
+    width: min(78vw, 340px);
+    scroll-snap-align: start;
+  }
   .content { overflow: visible; padding: 12px; }
   .quote-head, .lower-grid, .right-rail, .module-grid, .scanner-actions, .scanner-grid, .geo-cols, .policy-detail { grid-template-columns: 1fr; }
   .quote-head > div:first-child { grid-column: auto; }
-  .quote-head { padding: 12px; }
-  .chart-shell { height: 420px; min-height: 420px; }
+  .quote-head { padding: 14px; gap: 12px; }
+  .quote-head h1 { font-size: 40px; }
+  .price-block strong { font-size: 34px; }
+  .chart-stats { grid-template-columns: 1fr; }
+  .chart-shell { height: 360px; min-height: 360px; }
+  .calendar-row, .proof-row, .insider-row {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .calendar-row small { text-align: left; }
+  .module-hero h1 { font-size: 30px; }
+  .metric strong { font-size: 18px; }
   .movers { overflow-x: auto; }
 }

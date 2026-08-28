@@ -7,6 +7,21 @@
     "userInterfaceStyle": "dark",
     "assetBundlePatterns": [
       "**/*"
-    ]
+    ],
+    "plugins": [
+      "expo-font",
+      "expo-asset"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c35f5ae9-f049-490b-b6c0-a622c2aac2a7"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.harimittapalli.haviquant",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
   }
 }

@@ -30,7 +30,26 @@ type Page =
   | "Risk"
   | "Backtesting"
   | "News"
+  | "Calendar"
   | "More";
+
+const PAGE_LABELS: Record<Page, string> = {
+  Dashboard: "Market Pulse",
+  "Stock Analysis": "HaVi Finance",
+  "Company Intelligence": "HaVi 360",
+  Fundamentals: "Fundamentals",
+  Technical: "Technicals",
+  Decision: "Trade Setup",
+  Scanner: "Trade Scanner",
+  Alerts: "Alerts",
+  "Evidence Research": "Evidence",
+  Portfolio: "Portfolio",
+  Risk: "Risk Management",
+  Backtesting: "Backtesting",
+  News: "News Hub",
+  Calendar: "Economic Calendar",
+  More: "More",
+};
 
 const API = (
   process.env.EXPO_PUBLIC_API_URL || "https://haviquant-1.onrender.com/api/v1"
@@ -50,14 +69,16 @@ const NAV: {id: Page; icon: keyof typeof Ionicons.glyphMap}[] = [
   {id: "Risk", icon: "shield-checkmark-outline"},
   {id: "Backtesting", icon: "analytics-outline"},
   {id: "News", icon: "newspaper-outline"},
+  {id: "Calendar", icon: "calendar-outline"},
 ];
 
 const BOTTOM_NAV: {id: Page; label: string; icon: keyof typeof Ionicons.glyphMap}[] = [
-  {id: "Dashboard", label: "Home", icon: "home-outline"},
+  {id: "Dashboard", label: "Pulse", icon: "pulse-outline"},
+  {id: "Stock Analysis", label: "Finance", icon: "business-outline"},
   {id: "Scanner", label: "Scanner", icon: "scan-outline"},
+  {id: "Company Intelligence", label: "360", icon: "analytics-outline"},
   {id: "Alerts", label: "Alerts", icon: "notifications-outline"},
-  {id: "News", label: "News", icon: "newspaper-outline"},
-  {id: "More", label: "More", icon: "ellipsis-horizontal-outline"},
+  {id: "Calendar", label: "Calendar", icon: "calendar-outline"},
 ];
 
 const SECTORS = ["All", "AI / Semiconductors", "Software / Cloud", "Biotech / Healthcare", "Space / Defense", "Energy", "Financials"];
@@ -117,6 +138,26 @@ function first(...values: any[]) {
 function text(value: any) {
   if (value === null || value === undefined || value === "" || value === "-") return "Not returned";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    const useful = value.filter(hasUsefulValue).slice(0, 4);
+    if (!useful.length) return "Not returned";
+    return useful.map(text).join(", ");
+  }
+  if (isObj(value)) {
+    const preferred = first(
+      value.label,
+      value.name,
+      value.title,
+      value.headline,
+      value.symbol,
+      value.status,
+      value.summary,
+      value.description,
+      value.value
+    );
+    if (preferred !== undefined) return text(preferred);
+    return hasUsefulValue(value) ? "Provider details available" : "Not returned";
+  }
   try {
     return JSON.stringify(value);
   } catch {
@@ -180,6 +221,8 @@ function friendlyKey(key: string) {
 function friendlyValue(key: string, value: any) {
   if (value === null || value === undefined || value === "" || value === "-") return "Not returned";
   const lower = key.toLowerCase();
+  if (Array.isArray(value)) return text(value);
+  if (isObj(value)) return text(value);
   if (lower.includes("date") || lower.includes("time") || lower.includes("published") || lower.includes("period")) return friendlyDate(value);
   if (lower.includes("margin") || lower.includes("growth") || lower.includes("pct") || lower.includes("percent")) return pct(Math.abs(Number(value)) <= 1 ? Number(value) * 100 : value);
   if (lower.includes("revenue") || lower.includes("profit") || lower.includes("income") || lower.includes("cash") || lower.includes("marketcap") || lower.includes("market cap")) return money(value);
@@ -189,7 +232,14 @@ function friendlyValue(key: string, value: any) {
 }
 
 function hasUsefulValue(value: any): boolean {
-  if (value === null || value === undefined || value === "" || value === "-" || value === "N/A") return false;
+  if (
+    value === null ||
+    value === undefined ||
+    value === "" ||
+    value === "-" ||
+    value === "N/A" ||
+    value === "Not returned"
+  ) return false;
   if (Array.isArray(value)) return value.some(hasUsefulValue);
   if (isObj(value)) return Object.values(value).some(hasUsefulValue);
   return true;
@@ -225,7 +275,7 @@ function sessionStats(analysis: AnyRecord) {
   const volume = sessionRows.reduce((sum, row) => sum + (Number(row.volume) || 0), 0);
   return {
     range: Number.isFinite(high) && Number.isFinite(low) ? `${money(low)} - ${money(high)}` : "Not returned",
-    volume: volume > 0 ? money(volume) : "Not returned",
+    volume: volume > 0 ? compactNumber(volume) : "Not returned",
   };
 }
 
@@ -449,7 +499,7 @@ export default function App() {
           <View style={styles.brandText}>
             <Text style={styles.eyebrow}>MARKET INTELLIGENCE TERMINAL</Text>
             <Text style={styles.title}>HaViQuant</Text>
-            <Text style={styles.subtitle}>360° Investment Intelligence</Text>
+            <Text style={styles.subtitle}>Evidence. Edge. Execution.</Text>
           </View>
         </View>
         <View style={styles.livePill}>
@@ -472,7 +522,7 @@ export default function App() {
         showsVerticalScrollIndicator
         style={styles.body}
       >
-        <MarketTape analysis={analysis} ticker={ticker} />
+        <MarketTape analysis={analysis} macro={macro} ticker={ticker} />
         <View style={styles.search}>
           <Ionicons name="search-outline" size={17} color="#7087a3" />
           <TextInput
@@ -493,7 +543,7 @@ export default function App() {
         <EventStrip macro={macro} />
 
         <View style={styles.pageHead}>
-          <Text style={styles.pageTitle}>{page}</Text>
+          <Text style={styles.pageTitle}>{PAGE_LABELS[page]}</Text>
           <TouchableOpacity onPress={reload} style={styles.refresh}>
             <Ionicons name="refresh-outline" size={16} color="#b9cbe0" />
             <Text style={styles.refreshText}>Refresh</Text>
@@ -501,7 +551,7 @@ export default function App() {
         </View>
 
         {loading ? (
-          <Loading label="Loading V26.2 intelligence..." />
+          <Loading label="Loading intelligence..." />
         ) : (
           <>
             {error ? <ErrorBox error={error} retry={reload} /> : null}
@@ -527,7 +577,7 @@ function MobileBottomNav({page, setPage}: {page: Page; setPage: (page: Page) => 
   return (
     <View style={styles.bottomNav}>
       {BOTTOM_NAV.map((item) => {
-        const active = page === item.id || (item.id === "Dashboard" && page === "Stock Analysis");
+        const active = page === item.id;
         return (
           <TouchableOpacity
             accessibilityLabel={`Open ${item.label}`}
@@ -601,21 +651,16 @@ function DesktopTerminal({
             <View style={styles.desktopLogo}><Text style={styles.logoText}>HQ</Text></View>
             <View>
               <Text style={styles.desktopBrandName}>HaViQuant</Text>
-              <Text style={styles.desktopBrandSub}>Market Intelligence Command Center</Text>
+              <Text style={styles.desktopBrandSub}>Evidence. Edge. Execution.</Text>
             </View>
           </View>
           {NAV.map((item) => (
             <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={[styles.desktopNavItem, page === item.id && styles.desktopNavActive]}>
               <Ionicons name={item.icon} size={17} color={page === item.id ? "#ffffff" : "#b7c7d8"} />
-              <Text style={styles.desktopNavText}>{item.id}</Text>
+              <Text style={styles.desktopNavText}>{PAGE_LABELS[item.id]}</Text>
             </TouchableOpacity>
           ))}
-          <View style={styles.proCard}>
-            <Text style={styles.proCardTitle}>HaViQuant Pro</Text>
-            <Text style={styles.proCardText}>Advanced tools, real-time data, and AI insights.</Text>
-            <View style={styles.upgradeButton}><Text style={styles.upgradeText}>Upgrade Now</Text></View>
-          </View>
-          <SentimentGauge />
+          <SentimentGauge analysis={analysis} macro={macro} />
         </View>
 
         <View style={styles.desktopMain}>
@@ -633,7 +678,7 @@ function DesktopTerminal({
                 value={input}
               />
             </View>
-            <MarketTape analysis={analysis} ticker={ticker} />
+            <MarketTape analysis={analysis} macro={macro} ticker={ticker} />
             <TouchableOpacity onPress={reload} style={styles.desktopIconButton}>
               <Ionicons name="refresh-outline" size={16} color="#cfd8e3" />
             </TouchableOpacity>
@@ -642,7 +687,7 @@ function DesktopTerminal({
           <EventStrip macro={macro} />
 
           {loading ? (
-            <Loading label="Loading V26.2 intelligence..." />
+            <Loading label="Loading intelligence..." />
           ) : error ? (
             <ErrorBox error={error} retry={reload} />
           ) : page === "Dashboard" || page === "Stock Analysis" ? (
@@ -654,13 +699,13 @@ function DesktopTerminal({
                 </View>
                 <View style={styles.desktopRightRail}>
                   <SetupPanel analysis={analysis} />
-                  <MarketContext analysis={analysis} profile={profile} />
-                  <SentimentPanel />
+                  <MarketContext analysis={analysis} macro={macro} profile={profile} />
+                  <SentimentPanel analysis={analysis} macro={macro} />
                   <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
                   <DecisionPage analysis={analysis} tradePlan={data.tradePlan || {}} ticker={ticker} />
                 </View>
               </View>
-              {watch.length ? <BottomMovers watch={watch} chooseTicker={chooseTicker} /> : null}
+              <BottomMovers macro={macro} watch={watch} chooseTicker={chooseTicker} />
               <View style={styles.desktopLowerGrid}>
                 <ImpactCalendar macro={macro} />
                 <EventImpact macro={macro} ticker={ticker} />
@@ -758,7 +803,13 @@ function DesktopChart({
 }
 
 function macroEvents(macro: AnyRecord) {
-  return arr(first(macro.events, macro.calendar, macro.economic_calendar, macro.impact_calendar, macro.items, macro.rows))
+  const direct = arr(first(macro.events, macro.calendar, macro.economic_calendar, macro.impact_calendar, macro.items, macro.rows));
+  const newsFallback = [
+    ...arr(macro.macro).map((item) => ({...item, category: first(item.category, "Macro")})),
+    ...arr(macro.politics).map((item) => ({...item, category: first(item.category, "Politics")})),
+    ...arr(macro.geopolitical).map((item) => ({...item, category: first(item.category, "Geopolitical")})),
+  ];
+  return (direct.length ? direct : newsFallback)
     .filter(hasUsefulValue)
     .slice(0, 12);
 }
@@ -768,7 +819,7 @@ function eventTitle(event: AnyRecord) {
 }
 
 function eventLevel(event: AnyRecord) {
-  const raw = String(first(event.importance, event.impact, event.level, event.severity, "INFO")).toUpperCase();
+  const raw = String(first(event.importance, event.impact, event.impact_label, event.sentiment?.impact, event.level, event.severity, "INFO")).toUpperCase();
   if (raw.includes("HIGH")) return "HIGH";
   if (raw.includes("MED")) return "MED";
   if (raw.includes("LOW")) return "LOW";
@@ -776,7 +827,11 @@ function eventLevel(event: AnyRecord) {
 }
 
 function eventTime(event: AnyRecord) {
-  return text(first(event.time, event.datetime, event.date_time, event.date, event.starts_at, event.released_at));
+  const value = first(event.datetime, event.date_time, event.starts_at, event.released_at, event.published_iso, event.published, event.date, event.time);
+  if (!value) return "Not returned";
+  const parsed = new Date(value);
+  if (Number.isFinite(parsed.getTime())) return friendlyDate(value);
+  return text(value);
 }
 
 function ImpactCalendar({macro}: {macro: AnyRecord}) {
@@ -787,6 +842,21 @@ function ImpactCalendar({macro}: {macro: AnyRecord}) {
         <ValueRow key={`${eventTitle(event)}-${index}`} label={eventLevel(event)} value={`${eventTitle(event)} · ${eventTime(event)}`} />
       )) : <EmptyState label="No impact calendar events returned by provider." />}
     </Panel>
+  );
+}
+
+function CalendarPage({macro, ticker}: {macro: AnyRecord; ticker: string}) {
+  return (
+    <>
+      <Hero ticker="Economic Calendar" badge="DATED MARKET EVENTS" name="Macro, earnings, policy, and market events returned by the connected provider." />
+      <ImpactCalendar macro={macro} />
+      <EventImpact macro={macro} ticker={ticker} />
+      <Panel title="Source Proofs">
+        {macroEvents(macro).length ? macroEvents(macro).map((event, index) => (
+          <ValueRow key={`${eventTitle(event)}-${index}`} label={eventLevel(event)} value={`${eventTime(event)} · ${eventTitle(event)}`} />
+        )) : <EmptyState label="No calendar source proofs returned by provider." />}
+      </Panel>
+    </>
   );
 }
 
@@ -819,50 +889,79 @@ function AiSummary({analysis}: {analysis: AnyRecord}) {
   );
 }
 
-function SentimentGauge() {
+function SentimentGauge({analysis, macro}: {analysis?: AnyRecord; macro?: AnyRecord}) {
   return (
     <View style={styles.sentimentCard}>
       <Text style={styles.panelTitle}>Market Sentiment</Text>
-      <SentimentBody />
+      <SentimentBody analysis={analysis || {}} macro={macro || {}} />
     </View>
   );
 }
 
-function SentimentPanel() {
+function SentimentPanel({analysis, macro}: {analysis: AnyRecord; macro: AnyRecord}) {
   return (
     <View testID="market-sentiment">
       <Panel title="Market Sentiment">
-        <SentimentBody />
+        <SentimentBody analysis={analysis} macro={macro} />
       </Panel>
     </View>
   );
 }
 
-function SentimentBody() {
+function SentimentBody({analysis, macro}: {analysis: AnyRecord; macro: AnyRecord}) {
+  const data = first(macro.sentiment, analysis.market_sentiment, analysis.market_context?.sentiment, {});
+  const score = first(data.score, data.value, data.market_score);
+  const label = first(data.label, data.state, data.regime, data.market_regime);
+  if (!hasUsefulValue(score) && !hasUsefulValue(label)) {
+    return <EmptyState label="Market sentiment feed not returned by provider." />;
+  }
   return (
-    <View>
-      <EmptyState label="Market sentiment feed not returned by provider." />
+    <View style={styles.sentimentBody}>
+      <Text style={styles.sentimentScore}>{hasUsefulValue(score) ? num(score, 0) : "Not returned"}</Text>
+      <Text style={styles.sentimentLabel}>{text(label)}</Text>
+      <ValueRow label="Bullish" value={hasUsefulValue(data.bullish_pct) ? pct(data.bullish_pct) : data.bullish} />
+      <ValueRow label="Neutral" value={hasUsefulValue(data.neutral_pct) ? pct(data.neutral_pct) : data.neutral} />
+      <ValueRow label="Bearish" value={hasUsefulValue(data.bearish_pct) ? pct(data.bearish_pct) : data.bearish} />
+      <Text style={styles.noticeText}>{text(first(data.source, data.updated_at))}</Text>
     </View>
   );
 }
 
-function BottomMovers({watch, chooseTicker}: {watch: string[]; chooseTicker: (ticker: string) => void}) {
+function moverItems(macro: AnyRecord, mode = "gainers") {
+  const source = first(macro.top_movers, macro.movers, {});
+  const data = mode === "active" ? first(source.most_active, source.active, source.items, source) : first(source.gainers, source.items, source);
+  return arr(data)
+    .map((item) => ({
+      change: first(item.change_pct, item.changePercent, item.percent_change),
+      price: first(item.price, item.last, item.value),
+      symbol: text(first(item.symbol, item.ticker)),
+    }))
+    .filter((item) => item.symbol !== "Not returned")
+    .slice(0, 12);
+}
+
+function BottomMovers({macro, watch, chooseTicker}: {macro: AnyRecord; watch: string[]; chooseTicker: (ticker: string) => void}) {
+  const movers = moverItems(macro, "gainers");
+  const fallback = watch.map((symbol) => ({symbol, change: undefined, price: undefined}));
+  const items = movers.length ? movers : fallback;
   return (
     <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.bottomMovers} contentContainerStyle={styles.bottomMoverContent} testID="top-movers">
       <Text style={styles.bottomTitle}>TOP MOVERS</Text>
-      {watch.map((symbol) => (
-        <TouchableOpacity key={symbol} onPress={() => chooseTicker(symbol)} style={styles.mover}>
-          <Text style={styles.moverSymbol}>{symbol}</Text>
-          <Text style={styles.moverDelta}>Open</Text>
+      {items.length ? items.map((item) => (
+        <TouchableOpacity key={item.symbol} onPress={() => chooseTicker(item.symbol)} style={styles.mover}>
+          <Text style={styles.moverSymbol}>{item.symbol}</Text>
+          <Text style={[styles.moverDelta, Number(item.change) < 0 && styles.moverDeltaBad]}>
+            {hasUsefulValue(item.change) ? `${Number(item.change) >= 0 ? "+" : ""}${pct(item.change)}` : "Open"}
+          </Text>
         </TouchableOpacity>
-      ))}
+      )) : <Text style={styles.emptyText}>No top movers returned by provider.</Text>}
     </ScrollView>
   );
 }
 
-function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
+function MarketTape({analysis, macro, ticker}: {analysis: AnyRecord; macro: AnyRecord; ticker: string}) {
   const change = Number(analysis.quote?.change_pct);
-  const indexItems = arr(first(analysis.market_indices, analysis.indices, analysis.market?.indices)).map((item) => [
+  const indexItems = arr(first(analysis.market_indices, analysis.indices, analysis.market?.indices, macro.market_indices, macro.indices, macro.market?.indices)).map((item) => [
     text(first(item.symbol, item.name, item.label)),
     displayData(first(item.value, item.price, item.last)),
     Number.isFinite(Number(first(item.change_pct, item.changePercent, item.percent_change)))
@@ -878,8 +977,8 @@ function MarketTape({analysis, ticker}: {analysis: AnyRecord; ticker: string}) {
 
   return (
     <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} style={styles.tape} contentContainerStyle={styles.tapeContent}>
-      {marketItems.map(([label, value, delta]) => (
-        <View key={label} style={styles.tapeItem}>
+      {marketItems.map(([label, value, delta], index) => (
+        <View key={`${label}-${index}`} style={styles.tapeItem}>
           <Text style={styles.tapeLabel}>{label}</Text>
           <Text style={styles.tapeValue}>{value}</Text>
           <Text style={[styles.tapeDelta, String(delta).startsWith("-") && styles.tapeDeltaBad]}>{delta}</Text>
@@ -956,11 +1055,11 @@ function PageContent({
         <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
         <TerminalGrid>
           <SetupPanel analysis={analysis} />
-          <MarketContext analysis={analysis} profile={profile} />
+          <MarketContext analysis={analysis} macro={macro} profile={profile} />
         </TerminalGrid>
         <MarketTrendPanel analysis={analysis} />
-        <SentimentPanel />
-        <TopMoversPanel />
+        <SentimentPanel analysis={analysis} macro={macro} />
+        <TopMoversPanel macro={macro} />
         <MetricGrid
           items={[
             ["Live Price", money(analysis.quote?.price)],
@@ -993,7 +1092,7 @@ function PageContent({
         <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
         <TerminalGrid>
           <SetupPanel analysis={analysis} />
-          <MarketContext analysis={analysis} profile={profile} />
+          <MarketContext analysis={analysis} macro={macro} profile={profile} />
         </TerminalGrid>
         <MetricGrid
           items={[
@@ -1022,6 +1121,7 @@ function PageContent({
   if (page === "Scanner") return <ScannerPage ticker={ticker} />;
   if (page === "Alerts") return <AlertsPage analysis={analysis} news={news} ticker={ticker} />;
   if (page === "Evidence Research") return <ResearchPage macro={macro} news={news} ticker={ticker} />;
+  if (page === "Calendar") return <CalendarPage macro={macro} ticker={ticker} />;
   if (page === "Portfolio") return <AuthPortfolio token={token} setToken={setToken} />;
   if (page === "Risk") return <RiskPage token={token} />;
   if (page === "Backtesting") return <BacktestingPage analysis={analysis} macro={macro} ticker={ticker} />;
@@ -1099,13 +1199,15 @@ function SetupPanel({analysis}: {analysis: AnyRecord}) {
   );
 }
 
-function MarketContext({analysis, profile}: {analysis: AnyRecord; profile: AnyRecord}) {
+function MarketContext({analysis, macro, profile}: {analysis: AnyRecord; macro: AnyRecord; profile: AnyRecord}) {
+  const sentiment = first(macro.sentiment, analysis.market_sentiment, {});
   return (
     <Panel title="Market Context">
-      <ValueRow label="Overall Market" value={text(first(analysis.market_context?.overall, analysis.market?.regime))} />
+      <ValueRow label="Overall Market" value={text(first(analysis.market_context?.overall, analysis.market?.regime, macro.market_regime, sentiment.label))} />
       <ValueRow label="Sector" value={text(profile.sector)} />
-      <ValueRow label="Regime" value={text(analysis.technical?.trend)} />
-      <ValueRow label="Volatility" value={text(analysis.technical?.volatility)} />
+      <ValueRow label="Regime" value={text(first(macro.market_regime, sentiment.market_regime, analysis.technical?.trend))} />
+      <ValueRow label="Volatility" value={text(first(macro.vix_regime, analysis.technical?.volatility))} />
+      <ValueRow label="Liquidity" value={hasUsefulValue(analysis.technical?.volume_ratio) ? `${num(analysis.technical.volume_ratio)}x Avg Volume` : "Not returned"} />
     </Panel>
   );
 }
@@ -1180,16 +1282,17 @@ function Panel({title, children}: {title: string; children: React.ReactNode}) {
 }
 
 function MetricGrid({items}: {items: [string, any][]}) {
+  const visible = items.filter(([, value]) => hasUsefulValue(displayData(value)));
   return (
     <View style={styles.cards}>
-      {items.map(([label, value]) => (
+      {visible.length ? visible.map(([label, value]) => (
         <View key={label} style={styles.card}>
           <Text style={styles.cardLabel}>{label}</Text>
           <Text numberOfLines={2} adjustsFontSizeToFit style={styles.cardValue}>
             {displayData(value)}
           </Text>
         </View>
-      ))}
+      )) : <EmptyState label="No metrics returned by provider." />}
     </View>
   );
 }
@@ -1220,7 +1323,7 @@ function ChartPanel({
       </View>
       {valid.length ? (
         <>
-          <CandleChart analysis={analysis} rows={valid} height={230} count={42} />
+          <CandleChart analysis={analysis} rows={valid} height={260} count={36} />
           <View style={styles.chartMeta}>
             <Text style={styles.metaText}>{valid.slice(-42).length} real candles</Text>
             <Text style={styles.metaText}>{timeframe}</Text>
@@ -1261,10 +1364,17 @@ function ChartIntelPanel({analysis, timeframe}: {analysis: AnyRecord; timeframe:
   );
 }
 
-function TopMoversPanel() {
+function TopMoversPanel({macro}: {macro: AnyRecord}) {
+  const movers = moverItems(macro, "gainers").slice(0, 6);
   return (
     <Panel title="Top Movers">
-      <EmptyState label="Top movers feed not returned by provider." />
+      {movers.length ? movers.map((item) => (
+        <ValueRow
+          key={item.symbol}
+          label={item.symbol}
+          value={`${hasUsefulValue(item.price) ? money(item.price) : "Price not returned"} · ${hasUsefulValue(item.change) ? `${Number(item.change) >= 0 ? "+" : ""}${pct(item.change)}` : "Move not returned"}`}
+        />
+      )) : <EmptyState label="Top movers feed not returned by provider." />}
     </Panel>
   );
 }
@@ -1405,7 +1515,7 @@ function ToggleRow({enabled, label, onPress, value}: {enabled: boolean; label: s
 }
 
 function MorePage({setPage}: {setPage: (page: Page) => void}) {
-  const pages = NAV.filter((item) => !["Dashboard", "Scanner", "Alerts", "Portfolio"].includes(item.id));
+  const pages = NAV.filter((item) => !["Dashboard", "Stock Analysis", "Company Intelligence", "Scanner", "Alerts", "Calendar", "Portfolio"].includes(item.id));
   return (
     <>
       <Hero ticker="More" badge="RESEARCH WORKSPACE" name="Open the deeper company, technical, decision, risk, backtesting, and news views." />
@@ -1413,7 +1523,7 @@ function MorePage({setPage}: {setPage: (page: Page) => void}) {
         {pages.map((item) => (
           <TouchableOpacity key={item.id} onPress={() => setPage(item.id)} style={styles.moreTile}>
             <Ionicons name={item.icon} size={19} color="#74e6ff" />
-            <Text style={styles.moreTitle}>{item.id}</Text>
+            <Text style={styles.moreTitle}>{PAGE_LABELS[item.id]}</Text>
           </TouchableOpacity>
         ))}
       </View>
@@ -1451,10 +1561,18 @@ function CandleChart({
   const [selectedIndex, setSelectedIndex] = useState(Math.max(0, visible.length - 1));
   if (!visible.length) return <EmptyState label="No OHLC candles returned." />;
 
+  const rawLevels = analysis.levels || {};
+  const levelSpecs = [
+    {label: "Entry", value: Number(first(rawLevels.entry, rawLevels.entry_zone, analysis.quote?.price)), style: styles.levelEntry},
+    {label: "Target 1", value: Number(first(rawLevels.target1, rawLevels.target_1)), style: styles.levelTarget},
+    {label: "Target 2", value: Number(first(rawLevels.target2, rawLevels.target_2)), style: styles.levelTarget},
+    {label: "Stop", value: Number(first(rawLevels.stop, rawLevels.stop_loss)), style: styles.levelStop},
+  ].filter((item) => Number.isFinite(item.value));
   const highs = visible.map((row) => row.high);
   const lows = visible.map((row) => row.low);
-  const min = Math.min(...lows);
-  const max = Math.max(...highs);
+  const levelValues = levelSpecs.map((item) => item.value);
+  const min = Math.min(...lows, ...levelValues);
+  const max = Math.max(...highs, ...levelValues);
   const span = max - min || 1;
   const y = (value: number) => ((max - value) / span) * (height - 26) + 13;
   const last = visible[visible.length - 1];
@@ -1471,6 +1589,16 @@ function CandleChart({
         ))}
         <Text style={[styles.priceAxis, {top: 8}]}>{money(max)}</Text>
         <Text style={[styles.priceAxis, {bottom: 5}]}>{money(min)}</Text>
+        {levelSpecs.map((level) => (
+          <View key={`${level.label}-${level.value}`} style={[styles.chartLevel, level.style, {top: y(level.value)}]}>
+            <Text numberOfLines={1} style={[styles.chartLevelText, level.style]}>
+              {level.label} {money(level.value)}
+            </Text>
+          </View>
+        ))}
+        <View style={[styles.chartPricePill, {top: y(last.close)}]}>
+          <Text style={styles.chartPricePillText}>{money(last.close)}</Text>
+        </View>
         <View style={styles.candleRow}>
           {visible.map((row, index) => {
             const up = row.close >= row.open;
@@ -1502,6 +1630,13 @@ function CandleChart({
           {friendlyDate(active.time)} · Volume {compactNumber(active.volume)}
         </Text>
       </View>
+      {levelSpecs.length ? (
+        <View style={styles.chartLegend}>
+          {levelSpecs.slice(0, 4).map((level) => (
+            <Text key={`legend-${level.label}`} style={[styles.chartLegendText, level.style]}>{level.label}</Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1518,7 +1653,7 @@ function TechnicalCards({analysis}: {analysis: AnyRecord}) {
         ["RSI", num(t.rsi)],
         ["MACD", num(t.macd)],
         ["MACD Signal", num(t.macd_signal)],
-        ["Volume Ratio", num(t.volume_ratio)],
+        ["Volume Ratio", hasUsefulValue(t.volume_ratio) ? `${num(t.volume_ratio)}x` : "Not returned"],
       ]}
     />
   );
@@ -1876,7 +2011,7 @@ function NewsPage({news, ticker}: {news: AnyRecord; ticker: string}) {
                 <View style={styles.newsBody}>
                   <Text style={styles.newsTitle}>{item.title || item.headline || "Market update"}</Text>
                   <Text style={styles.newsMeta}>
-                    {sentimentLabel(item)} · {text(first(item.publisher, item.source, "Market source"))} · {friendlyDate(first(item.published_at, item.published, item.publishedIso, item.date))}
+                    {sentimentLabel(item)} · {text(first(item.publisher, item.source, "Market source"))} · {friendlyDate(first(item.published_at, item.published, item.published_iso, item.publishedIso, item.date))}
                   </Text>
                   {item.summary || item.description ? <Text style={styles.longText}>{item.summary || item.description}</Text> : null}
                 </View>
@@ -1927,11 +2062,11 @@ function DataRow({row}: {row: any}) {
   );
 }
 
-function ValueRow({label, value}: {label: string; value: string}) {
+function ValueRow({label, value}: {label: string; value: any}) {
   return (
     <View style={styles.valueRow}>
       <Text style={styles.valueLabel}>{label}</Text>
-      <Text style={styles.valueValue}>{value}</Text>
+      <Text style={styles.valueValue}>{text(value)}</Text>
     </View>
   );
 }
@@ -1960,6 +2095,7 @@ const styles = StyleSheet.create({
   sentimentRed: {backgroundColor: "#ff5368"},
   sentimentAmber: {backgroundColor: "#f7c846"},
   sentimentGreen: {backgroundColor: "#20e188", flex: 1.8},
+  sentimentBody: {gap: 4},
   sentimentScore: {color: "#2fed86", fontSize: 30, fontWeight: "900", textAlign: "center"},
   sentimentLabel: {color: "#2fed86", fontSize: 11, fontWeight: "900", marginBottom: 8, textAlign: "center"},
   desktopMain: {flex: 1, minWidth: 0},
@@ -1996,7 +2132,7 @@ const styles = StyleSheet.create({
   candleGrid: {alignItems: "flex-end", flex: 1, flexDirection: "row", gap: 5, padding: 22},
   candle: {borderRadius: 2, width: 8},
   candleChart: {backgroundColor: "#06111d", borderColor: "#14263a", borderRadius: 9, borderWidth: 1, flex: 1, margin: 8, overflow: "hidden", position: "relative"},
-  candleRow: {bottom: 12, flexDirection: "row", gap: 3, left: 12, position: "absolute", right: 44, top: 12},
+  candleRow: {bottom: 16, flexDirection: "row", gap: 3, left: 12, position: "absolute", right: 52, top: 14},
   candleSlot: {flex: 1, minWidth: 4, position: "relative"},
   candleWick: {left: "48%", position: "absolute", width: 1},
   candleBody: {borderRadius: 2, left: "25%", position: "absolute", width: "50%"},
@@ -2004,6 +2140,15 @@ const styles = StyleSheet.create({
   candleBodyDesktop: {left: "20%", width: "60%"},
   chartGridLine: {backgroundColor: "#17304a", height: 1, left: 0, opacity: 0.65, position: "absolute", right: 0},
   priceAxis: {color: "#6f87a1", fontSize: 9, position: "absolute", right: 8},
+  chartLevel: {borderTopWidth: 1, left: 12, opacity: 0.95, position: "absolute", right: 52},
+  chartLevelText: {alignSelf: "flex-end", backgroundColor: "#06111d", fontSize: 8, fontWeight: "900", marginTop: -10, overflow: "hidden", paddingHorizontal: 4},
+  chartPricePill: {alignItems: "center", backgroundColor: "#113a50", borderColor: "#2a9ac0", borderRadius: 4, borderWidth: 1, paddingHorizontal: 4, paddingVertical: 2, position: "absolute", right: 8},
+  chartPricePillText: {color: "#9bf3ff", fontSize: 8, fontWeight: "900"},
+  levelEntry: {borderColor: "#2f8cff", color: "#4aa3ff"},
+  levelTarget: {borderColor: "#20e188", color: "#20e188"},
+  levelStop: {borderColor: "#ff5368", color: "#ff5368"},
+  chartLegend: {flexDirection: "row", flexWrap: "wrap", gap: 7, marginHorizontal: 8, marginTop: 6},
+  chartLegendText: {fontSize: 9, fontWeight: "900"},
   tradeZone: {backgroundColor: "rgba(32,225,136,0.14)", borderColor: "rgba(32,225,136,0.35)", borderRadius: 4, borderWidth: 1, height: 46, position: "absolute", right: 52, width: "24%"},
   signalBuy: {backgroundColor: "#092f1a", borderColor: "#1ad675", borderRadius: 4, borderWidth: 1, color: "#26f084", fontSize: 8, fontWeight: "900", left: "26%", overflow: "hidden", paddingHorizontal: 4, paddingVertical: 3, position: "absolute", top: "28%"},
   signalBuyDesktop: {fontSize: 10, left: "30%", padding: 5},
@@ -2011,7 +2156,7 @@ const styles = StyleSheet.create({
   signalBreakDesktop: {fontSize: 10, left: "62%", padding: 5},
   signalStop: {color: "#ff5265", fontSize: 8, fontWeight: "900", position: "absolute", right: 54, top: "66%"},
   signalStopDesktop: {fontSize: 10, right: 70},
-  chartReadout: {backgroundColor: "#081929", borderColor: "#1b3048", borderRadius: 8, borderWidth: 1, gap: 3, marginHorizontal: 8, marginTop: 3, padding: 8},
+  chartReadout: {backgroundColor: "#081929", borderColor: "#1b3048", borderRadius: 8, borderWidth: 1, gap: 3, marginHorizontal: 8, marginTop: 3, padding: 9},
   chartReadoutTitle: {color: "#7de6ff", fontSize: 11, fontWeight: "900"},
   chartReadoutText: {color: "#90a6bf", fontSize: 10},
   oscillator: {backgroundColor: "#0c1430", borderColor: "#223552", borderRadius: 7, borderWidth: 1, height: 82, marginTop: 8, overflow: "hidden"},
@@ -2022,6 +2167,7 @@ const styles = StyleSheet.create({
   mover: {alignItems: "center", borderLeftColor: "#284057", borderLeftWidth: 1, flexDirection: "row", gap: 8, paddingLeft: 14},
   moverSymbol: {color: "#dbe9f5", fontSize: 12, fontWeight: "900"},
   moverDelta: {color: "#2fed86", fontSize: 10, fontWeight: "900"},
+  moverDeltaBad: {color: "#ff5368"},
   topbar: {
     alignItems: "center",
     borderBottomColor: "#15253a",
@@ -2078,7 +2224,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 6,
     justifyContent: "space-around",
-    paddingBottom: 8,
+    paddingBottom: 9,
     paddingHorizontal: 8,
     paddingTop: 8,
   },
@@ -2089,11 +2235,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     flex: 1,
     gap: 3,
-    minHeight: 54,
+    minHeight: 52,
     justifyContent: "center",
   },
   bottomNavItemActive: {backgroundColor: "#10233a", borderColor: "#245f7a"},
-  bottomNavText: {color: "#7c90a8", fontSize: 9, fontWeight: "800"},
+  bottomNavText: {color: "#7c90a8", fontSize: 8, fontWeight: "800"},
   bottomNavTextActive: {color: "#74e6ff"},
   pageHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between", marginBottom: 7, marginTop: 4},
   pageTitle: {color: "#eaf2ff", flex: 1, fontSize: 18, fontWeight: "900"},

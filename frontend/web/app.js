@@ -2,21 +2,29 @@ const API = (location.hostname === "127.0.0.1" || location.hostname === "localho
   ? "http://127.0.0.1:8000/api/v1"
   : "https://haviquant-1.onrender.com/api/v1";
 
-const NAV = [
-  "Dashboard",
-  "Stock Analysis",
-  "Company Intelligence",
-  "Fundamentals",
-  "Technical",
-  "Decision",
-  "Trade Scanner",
-  "Evidence Research",
-  "Portfolio",
-  "Risk",
-  "Backtesting",
-  "News",
-  "Calendar",
+const NAV_GROUPS = [
+  {label: "Home", items: [
+    ["Dashboard", "Market Pulse"],
+  ]},
+  {label: "Discover", items: [
+    ["Trade Scanner", "Trade Scanner"],
+    ["News", "News Hub"],
+    ["Calendar", "Economic Calendar"],
+  ]},
+  {label: "Analyze", items: [
+    ["Company Intelligence", "HaVi 360"],
+    ["Evidence Research", "Evidence"],
+    ["Technical", "Technicals"],
+    ["Fundamentals", "Fundamentals"],
+  ]},
+  {label: "Decide", items: [
+    ["Decision", "Trade Setup"],
+    ["Risk", "Risk Management"],
+    ["Backtesting", "Backtesting"],
+  ]},
 ];
+
+const NAV = NAV_GROUPS.flatMap((group) => group.items.map(([page]) => page));
 
 const ICONS = {
   "Dashboard": "grid",
@@ -46,14 +54,8 @@ const TIMEFRAMES = {
   "1M": ["10y", "1mo"],
 };
 
-const CALENDAR_TABS = ["Upcoming", "Earnings", "Economic", "Fed", "All"];
-const EVENTS = [
-  {category: "Economic", level: "HIGH", title: "Personal Income and PCE Deflator", date: "2026-08-26", time: "8:30 AM ET", impact: "Very High", proof: "New York Fed Economic Indicators Calendar", sourceUrl: "https://www.newyorkfed.org/research/calendars/i-aug26.html", scenario: "PCE inflation can move yields and growth-stock multiples. Softer inflation can support risk appetite; hotter inflation can pressure high-multiple names."},
-  {category: "Economic", level: "HIGH", title: "Gross Domestic Product 2nd Release", date: "2026-08-26", time: "8:30 AM ET", impact: "High", proof: "New York Fed Economic Indicators Calendar", sourceUrl: "https://www.newyorkfed.org/research/calendars/i-aug26.html", scenario: "GDP revisions affect growth expectations, yields, cyclicals and broad market risk appetite."},
-  {category: "Economic", level: "MEDIUM", title: "Advance Durable Goods", date: "2026-08-26", time: "8:30 AM ET", impact: "Medium", proof: "New York Fed Economic Indicators Calendar", sourceUrl: "https://www.newyorkfed.org/research/calendars/i-aug26.html", scenario: "Durable goods can influence industrials, transports, rates and demand expectations."},
-  {category: "Economic", level: "MEDIUM", title: "Corporate Bond Market Distress Index", date: "2026-08-26", time: "10:00 AM ET", impact: "Medium", proof: "New York Fed Economic Indicators Calendar", sourceUrl: "https://www.newyorkfed.org/research/calendars/i-aug26.html", scenario: "Credit stress readings can affect market risk appetite and highly leveraged sectors."},
-  {category: "Fed", level: "HIGH", title: "Fed Chair Jackson Hole Speech", date: "2026-08-28", time: "10:00 AM ET", impact: "Very High", proof: "Federal Reserve Board Calendar", sourceUrl: "https://www.federalreserve.gov/newsevents/2026-august.htm", scenario: "This is not scheduled for today. Market impact depends on inflation language, rate guidance, and bond-yield reaction."},
-];
+const CALENDAR_TABS = ["Upcoming", "Macro", "Politics", "Geopolitical", "Earnings", "Economic", "Fed", "All"];
+const EVENTS = [];
 
 const state = {
   ticker: "NVDA",
@@ -77,7 +79,7 @@ const state = {
   chartOffset: 0,
   selected: null,
   calendarTab: "Upcoming",
-  selectedEvent: "Personal Income and PCE Deflator",
+  selectedEvent: "",
   calendarOpen: false,
   moverMode: "Gainers",
   chartTool: "Indicators",
@@ -89,6 +91,9 @@ const state = {
   error: "",
 };
 
+const initialPage = new URLSearchParams(location.search).get("page");
+if (initialPage && NAV.includes(initialPage)) state.page = initialPage;
+
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
@@ -97,6 +102,20 @@ const arr = (x) => Array.isArray(x) ? x : !x ? [] : Array.isArray(x.items) ? x.i
 const num = (x, d = 2) => Number.isFinite(Number(x)) ? Number(x).toFixed(d) : "-";
 const pct = (x) => Number.isFinite(Number(x)) ? `${Number(x).toFixed(2)}%` : "-";
 const plusPct = (x) => Number.isFinite(Number(x)) ? `+${Number(x).toFixed(2)}%` : "-";
+const signedPct = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : "Not returned";
+const formatDelta = (x) => Number.isFinite(Number(x)) ? `${Number(x) >= 0 ? "+" : ""}${pct(x)}` : displayValue(x, "provider");
+const formatMarketValue = (x) => Number.isFinite(Number(x)) ? Number(x).toLocaleString(undefined, {maximumFractionDigits: 2}) : displayValue(x);
+const compactNumber = (x) => {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return "Not returned";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(2)}T`;
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(2)}K`;
+  return `${sign}${abs.toLocaleString(undefined, {maximumFractionDigits: 2})}`;
+};
 const TICKER_ALIASES = {
   SPACEX: "SPCX",
   SPACX: "SPCX",
@@ -133,11 +152,6 @@ const SECTOR_UNIVERSES = {
   Financials: ["JPM", "GS", "XLF", "SQ", "PYPL", "HOOD", "SOFI"],
   "ETFs / Macro": ["SPY", "QQQ", "IWM", "TLT", "XBI", "XLE", "XLK", "XLF", "XLI", "XLY", "XLP", "XLV"],
 };
-const GEOPOLITICS_FALLBACK = [
-  {theme: "Tariffs / Trade Policy", heat: 35, direction: "Watch", benefiting_sectors: ["domestic industrials", "materials", "defense supply chain"], pressured_sectors: ["retail importers", "hardware margins", "global autos"], stocks_to_watch: ["CAT", "DE", "XME", "FCX", "AAPL", "TSLA", "XLY"], why: "Live policy endpoint is not available in production yet. Use this as a watchlist only until linked article proof is returned.", policy_details: []},
-  {theme: "Defense / Global Conflict", heat: 35, direction: "Watch", benefiting_sectors: ["defense", "aerospace", "cybersecurity"], pressured_sectors: ["airlines", "travel", "risk assets"], stocks_to_watch: ["LMT", "RTX", "NOC", "BA", "PANW", "CRWD", "CCL", "NCLH"], why: "Live policy endpoint is not available in production yet. Confirm with official releases and source articles before trading.", policy_details: []},
-  {theme: "Technology Regulation / AI Policy", heat: 35, direction: "Watch", benefiting_sectors: ["approved AI infrastructure", "cybersecurity", "domestic semiconductors"], pressured_sectors: ["restricted chip exports", "high multiple software"], stocks_to_watch: ["NVDA", "AMD", "AVGO", "TSM", "CRWD", "PANW", "NET", "XLK"], why: "Live policy endpoint is not available in production yet. Treat this as a monitoring panel, not a confirmed catalyst.", policy_details: []},
-];
 const money = (x) => {
   const n = Number(x);
   if (!Number.isFinite(n)) return "-";
@@ -152,6 +166,21 @@ const displayValue = (x, fallback = "Not returned") => {
   const v = x ?? "";
   return v === "" || v === "-" || v === "N/A" ? fallback : v;
 };
+const hasValue = (x) => x !== null && x !== undefined && x !== "" && x !== "-" && x !== "N/A";
+const firstNumber = (...xs) => {
+  for (const x of xs) {
+    const n = Number(x);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+};
+const firstPositiveNumber = (...xs) => {
+  for (const x of xs) {
+    const n = typeof x === "string" ? Number(x.replace(/[$,%\s,]/g, "")) : Number(x);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+};
 const candles = () => arr(first(state.analysis?.candles, state.analysis?.chart, state.analysis?.rows));
 const sessionStats = () => {
   const rows = candles().filter((r) => Number.isFinite(Number(r.high)) && Number.isFinite(Number(r.low)));
@@ -164,19 +193,23 @@ const sessionStats = () => {
   const volume = sessionRows.reduce((sum, r) => sum + (Number(r.volume) || 0), 0);
   return {
     range: Number.isFinite(high) && Number.isFinite(low) ? `${money(low)} - ${money(high)}` : "Not returned",
-    volume: volume > 0 ? money(volume) : "Not returned",
+    volume: volume > 0 ? compactNumber(volume) : "Not returned",
   };
 };
-const marketCap = () => money(first(
-  (state.company?.profile || {}).market_cap,
-  (state.company?.profile || {}).marketCap,
-  state.company?.market_cap,
-  state.company?.marketCap,
-  state.fundamental?.profile?.market_cap,
-  state.fundamental?.profile?.marketCap,
-  state.fundamental?.market_cap,
-  state.fundamental?.marketCap
-));
+const marketCap = () => {
+  const p = state.company?.profile || {};
+  const cap = firstPositiveNumber(
+    p.market_cap,
+    p.marketCap,
+    state.company?.market_cap,
+    state.company?.marketCap,
+    state.fundamental?.profile?.market_cap,
+    state.fundamental?.profile?.marketCap,
+    state.fundamental?.market_cap,
+    state.fundamental?.marketCap
+  );
+  return cap ? money(cap) : "Not returned";
+};
 
 async function api(path) {
   const token = localStorage.getItem("haviquant_access_token");
@@ -199,66 +232,6 @@ async function apiFirst(paths) {
     }
   }
   throw lastError || Error("API request failed");
-}
-
-function scannerSymbolsForSector(sector) {
-  const selected = String(sector || "All");
-  return (selected === "All" ? SCAN_UNIVERSE : (SECTOR_UNIVERSES[selected] || SCAN_UNIVERSE)).slice(0, 50);
-}
-
-function fallbackScannerRow(analysis, newsItems) {
-  const ticker = analysis.ticker || "-";
-  const setup = Number(analysis.setup_quality || 0);
-  const change = Number(analysis.change_pct || 0);
-  const volume = Number(analysis.volume_ratio || 0);
-  const catalystScore = newsItems.length ? Math.min(24, newsItems.length * 4) : 0;
-  const score = Math.max(0, Math.min(100, setup * .72 + catalystScore + Math.max(0, change) * .8 + Math.min(10, volume * 2)));
-  const upside = Math.max(1.5, Math.min(12, 2.5 + Math.max(0, score - 55) / 9));
-  const price = Number(analysis.price);
-  return {
-    ticker,
-    score: Number(score.toFixed(1)),
-    signal: analysis.signal || "WATCH",
-    trend: analysis.trend || "-",
-    momentum: analysis.momentum || "-",
-    price: Number.isFinite(price) ? price : null,
-    change_pct: Number.isFinite(change) ? change : null,
-    volume_ratio: Number.isFinite(volume) ? volume : null,
-    estimated_upside_pct: Number(upside.toFixed(1)),
-    estimated_target_price: Number.isFinite(price) ? Number((price * (1 + upside / 100)).toFixed(2)) : null,
-    estimated_bullish_timeframe: setup >= 70 ? "1-5 trading days after volume confirmation" : setup >= 50 ? "1-3 weeks if price confirms breakout" : "No bullish timeframe yet; wait for confirmation",
-    upside_thesis: `${ticker} is ranked from live production analysis because the setup score is ${setup}/100 with ${analysis.trend || "mixed"} trend and ${analysis.momentum || "neutral"} momentum.`,
-    confirmation: ["Break above resistance or prior day high", "Volume expansion above recent average", "Fresh positive source or company event confirmation"],
-    risk_watch: ["Backend scanner route is unavailable, so this row uses production fallback ranking", "Do not trade without confirming price, volume, and source news"],
-    why: [`Production fallback scan from live ${ticker} analysis`, newsItems[0]?.title ? `Latest headline: ${newsItems[0].title}` : "No fresh headline returned"],
-    articles: newsItems.slice(0, 3).map((x) => ({title: x.title || x.headline, publisher: x.publisher || x.source, url: x.url || x.link, sentiment: x.sentiment})),
-    next_announcement_watch: {summary: newsItems[0]?.title || "Watch next company filing, earnings, product update, or analyst revision."},
-    product_progress_watch: "Track product launches, contracts, production updates, regulatory milestones, and management guidance.",
-  };
-}
-
-async function fallbackTradeScanner() {
-  const symbols = scannerSymbolsForSector(state.scannerSector);
-  const rows = [];
-  for (let i = 0; i < symbols.length; i += 8) {
-    const batch = symbols.slice(i, i + 8);
-    const results = await Promise.allSettled(batch.map(async (ticker) => {
-      const analysis = await api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=60d&interval=5m`);
-      let newsData = {items: []};
-      try {
-        newsData = await apiFirst([`/market/news?ticker=${encodeURIComponent(ticker)}`, `/news/${encodeURIComponent(ticker)}?limit=6`]);
-      } catch {}
-      return fallbackScannerRow(analysis, arr(newsData.items || newsData));
-    }));
-    results.forEach((result, idx) => {
-      if (result.status === "fulfilled") rows.push(result.value);
-      else rows.push({ticker: batch[idx], score: 0, signal: "WATCH", why: [`Fallback scan failed: ${result.reason?.message || "No data"}`], articles: [], risk_watch: ["No production data returned for this symbol"]});
-    });
-    state.scanner = {sector: state.scannerSector, universe_size: symbols.length, items: rows.slice().sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 50), fallback: true};
-    renderContent();
-  }
-  rows.sort((a, b) => (b.score || 0) - (a.score || 0));
-  return {updated_at: new Date().toISOString(), sector: state.scannerSector, sectors: ["All", ...Object.keys(SECTOR_UNIVERSES)], universe_size: symbols.length, items: rows.slice(0, 50), method: "Production fallback ranks existing live analysis plus available news.", disclaimer: "Research signal only. This does not guarantee that the stock price will rise.", fallback: true};
 }
 
 function icon(name) {
@@ -294,11 +267,30 @@ function card(title, body, cls = "") {
 }
 
 function metric(label, value, cls = "") {
-  return `<div class="metric ${cls}"><span>${esc(label)}</span><strong>${esc(value ?? "-")}</strong></div>`;
+  return `<div class="metric ${cls}"><span>${esc(label)}</span><strong>${esc(formatCell(value))}</strong></div>`;
 }
 
 function rows(obj) {
-  return Object.entries(obj || {}).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join("");
+  return Object.entries(obj || {}).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${esc(formatCell(v))}</b></div>`).join("");
+}
+
+function formatCell(value) {
+  if (!hasValue(value)) return "Not returned";
+  if (Array.isArray(value)) return value.length ? value.map(formatCell).join(", ") : "Not returned";
+  if (typeof value === "object") return displayValue(first(value.label, value.name, value.title, value.value), "Returned by provider");
+  if (typeof value === "number") return Math.abs(value) >= 100000 ? compactNumber(value) : String(value);
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text) && !Number.isNaN(new Date(text).getTime())) {
+    return new Date(text).toLocaleString(undefined, {month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit"});
+  }
+  return displayValue(text);
+}
+
+function metricList(items) {
+  const visible = items.filter(([, value]) => hasValue(value) && formatCell(value) !== "Not returned");
+  return visible.length
+    ? visible.map(([label, value, cls]) => metric(label, value, cls || "")).join("")
+    : `<div class="empty compact">No provider-backed metrics returned for this section.</div>`;
 }
 
 function shell() {
@@ -307,21 +299,21 @@ function shell() {
       <aside class="sidebar">
         <div class="brand">
           <div class="brandmark">HQ</div>
-          <div><strong>HaViQuant</strong><small>Market Intelligence Command Center</small></div>
+          <div><strong>HaViQuant</strong><small>Evidence. Edge. Execution.</small></div>
         </div>
-        <nav>${NAV.map((n) => `<button class="${state.page === n ? "active" : ""}" data-nav="${esc(n)}">${icon(ICONS[n])}<span>${esc(n)}</span></button>`).join("")}</nav>
+        <nav>${NAV_GROUPS.map((group) => `<section class="nav-group"><h4>${esc(group.label)}</h4>${group.items.map(([page, label]) => `<button class="${state.page === page ? "active" : ""}" data-nav="${esc(page)}">${icon(ICONS[page])}<span>${esc(label)}</span></button>`).join("")}</section>`).join("")}</nav>
         ${sentimentBox("sidebar")}
-        <div class="market-status"><b>Market Open</b><span>Live API connected</span></div>
+        <div class="market-status"><b>${state.error ? "Data Issue" : "Market Open"}</b><span>${state.error ? "Provider request needs retry" : "Live API connected"}</span></div>
       </aside>
       <main class="workspace">
         <header class="topbar">
           <div class="searchbox">${icon("search")}<input id="tickerInput" value="${esc(state.query)}" placeholder="Search ticker, company or event..."><button id="analyze">Analyze</button></div>
           ${marketTape()}
-          <div class="tools">${icon("bell")}${icon("moon")}<div class="user">Hari M <span>Pro Trader</span></div></div>
+          <div class="tools">${icon("bell")}${icon("moon")}</div>
         </header>
         <section class="eventbar">${events()}</section>
         <div id="content" class="content"></div>
-        ${topMovers()}
+        ${["Dashboard", "Stock Analysis", "Trade Scanner"].includes(state.page) ? topMovers() : ""}
       </main>
     </div>
     <div id="stockTooltip" class="stock-tooltip"></div>
@@ -343,38 +335,49 @@ function shell() {
 function marketTape() {
   const a = state.analysis || {};
   const change = Number(a.change_pct);
+  const indexes = arr(first(
+    a.market_indices,
+    a.indices,
+    a.market?.indices,
+    state.macro?.market_indices,
+    state.macro?.indices,
+    state.macro?.market?.indices
+  )).map((item) => [
+    first(item.symbol, item.name, item.label),
+    first(item.value, item.price, item.last),
+    first(item.change_pct, item.changePercent, item.percent_change, item.status, item.state),
+  ]);
   const items = [
-    ["S&P 500", "5,543.22", "+0.98%"],
-    ["NASDAQ", "17,875.58", "+1.35%"],
-    ["DOW", "40,123.78", "+0.62%"],
-    ["VIX", "15.24", "-6.25%"],
+    ...indexes,
     [state.ticker, money(a.price), Number.isFinite(change) ? `${change >= 0 ? "+" : ""}${pct(change)}` : "LIVE"],
-  ];
-  return `<div class="tape">${items.map(([l, v, d]) => `<span><b>${esc(l)}</b><strong>${esc(v)}</strong><em class="${String(d).startsWith("-") ? "bad" : "good"}">${esc(d)}</em></span>`).join("")}</div>`;
+  ].filter(([l, v]) => first(l, "") && first(v, "") && String(v) !== "Not returned" && String(v) !== "-");
+  return `<div class="tape">${items.length ? items.map(([l, v, d]) => `<span><b>${esc(l)}</b><strong>${esc(formatMarketValue(v))}</strong><em class="${String(d).startsWith("-") ? "bad" : "good"}">${esc(formatDelta(d))}</em></span>`).join("") : `<span><b>Market Tape</b><strong>Not returned</strong><em>provider</em></span>`}</div>`;
 }
 
 function events() {
-  return `<button class="event-intro" data-open-calendar="1">Impact Calendar<br><small>${esc(todayLabel())}</small></button>${EVENTS.slice(0, 4).map((event) => `
-    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${event.level}</b><span>${esc(event.title.replace("{ticker}", state.ticker))}</span><em>${esc(eventDateLabel(event))}</em></div><small><strong>${esc(event.time)}</strong><em>${esc(eventEta(event))}</em></small></button>`).join("")}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
+  const items = calendarEvents().slice(0, 4);
+  return `<button class="event-intro" data-open-calendar="1">Impact Calendar<br><small>${esc(todayLabel())}</small></button>${items.length ? items.map((event) => `
+    <button class="event-card ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><i></i><div><b>${esc(event.level)}</b><span>${esc(event.title)}</span><em>${esc(event.dateLabel)}</em></div><small><strong>${esc(event.time)}</strong><em>${esc(event.status)}</em></small></button>`).join("") : `<button class="event-card info"><i></i><div><b>INFO</b><span>No impact events returned</span><em>${esc(todayLabel())}</em></div><small><strong>Provider</strong><em>empty</em></small></button>`}<button class="calendar-btn" data-open-calendar="1">View Full Calendar</button>`;
 }
 
 function topMovers() {
-  const symbols = ["NVDA", "AMD", "AVGO", "TSLA", "META", "INTC", "CCL", "NFLX", "QQQ", "SPY"];
-  return `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><button class="${state.moverMode === "Gainers" ? "active" : ""}" data-mover-mode="Gainers">Gainers</button><button class="${state.moverMode === "Most Active" ? "active" : ""}" data-mover-mode="Most Active">Most Active</button>${symbols.map((s, i) => `
-    <button data-mover="${s}" class="mover" data-tooltip="${esc(moverTooltip(s, i))}"><i>${moverIcon(s)}</i><span>${s}</span><em class="${i > 5 ? "bad" : "good"}">${i > 5 ? "-1.85%" : `+${(2.02 + i * .22).toFixed(2)}%`}</em></button>`).join("")}</footer>`;
+  const moverSource = first(state.macro?.top_movers, state.macro?.movers, state.analysis?.top_movers, {});
+  const data = state.moverMode === "Most Active"
+    ? first(moverSource?.most_active, moverSource?.active, moverSource)
+    : first(moverSource?.gainers, moverSource?.items, moverSource);
+  const items = arr(data).slice(0, 12).map((item) => ({
+    symbol: first(item.symbol, item.ticker),
+    name: first(item.name, item.company_name, item.company),
+    price: first(item.price, item.last),
+    change: first(item.change_pct, item.changePercent, item.percent_change),
+    sector: first(item.sector, item.industry),
+  })).filter((item) => hasValue(item.symbol));
+  return `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><button class="${state.moverMode === "Gainers" ? "active" : ""}" data-mover-mode="Gainers">Gainers</button><button class="${state.moverMode === "Most Active" ? "active" : ""}" data-mover-mode="Most Active">Most Active</button>${items.length ? items.map((item) => `
+    <button data-mover="${esc(item.symbol)}" class="mover" data-tooltip="${esc(moverTooltip(item))}"><i>${esc(String(item.symbol).slice(0, 1))}</i><span>${esc(item.symbol)}</span><em class="${Number(item.change) < 0 ? "bad" : "good"}">${esc(formatDelta(item.change))}</em></button>`).join("") : `<span class="empty compact">No top movers returned by provider.</span>`}</footer>`;
 }
 
-function moverIcon(symbol) {
-  const domains = {NVDA: "nvidia.com", AMD: "amd.com", AVGO: "broadcom.com", TSLA: "tesla.com", META: "meta.com", INTC: "intel.com", CCL: "carnivalcorp.com", NFLX: "netflix.com", QQQ: "invesco.com", SPY: "ssga.com"};
-  const domain = domains[symbol];
-  return domain ? `<img alt="${esc(symbol)} logo" src="https://logo.clearbit.com/${domain}" onerror="this.replaceWith(document.createTextNode('${esc(symbol.slice(0, 1))}'))">` : esc(symbol.slice(0, 1));
-}
-
-function moverTooltip(symbol, index) {
-  const names = {NVDA: "NVIDIA", AMD: "Advanced Micro Devices", AVGO: "Broadcom", TSLA: "Tesla", META: "Meta Platforms", INTC: "Intel", CCL: "Carnival", NFLX: "Netflix", QQQ: "Invesco QQQ", SPY: "SPDR S&P 500"};
-  const sectors = {NVDA: "AI chips", AMD: "Semiconductors", AVGO: "Chips / infrastructure", TSLA: "EV / autonomy", META: "Social / AI", INTC: "Semiconductors", CCL: "Cruise travel", NFLX: "Streaming", QQQ: "Nasdaq ETF", SPY: "S&P 500 ETF"};
-  const move = index > 5 ? "-1.85%" : `+${(2.02 + index * .22).toFixed(2)}%`;
-  return `${symbol} - ${names[symbol] || symbol}\nMove: ${move} (${index > 5 ? "lagging" : "gainer"})\nFocus: ${sectors[symbol] || "Market mover"}\nClick to load full analysis`;
+function moverTooltip(item) {
+  return `${item.symbol} - ${displayValue(item.name, "Name not returned")}\nPrice: ${money(item.price)}\nMove: ${formatDelta(item.change)}\nSector: ${displayValue(item.sector)}\nClick to load full analysis`;
 }
 
 function showStockTooltip(button) {
@@ -422,21 +425,30 @@ function bindGlobalControls() {
 }
 
 function calendarModal() {
+  const items = calendarEvents();
   return `<div class="modal-backdrop" data-close-calendar="1">
     <section class="calendar-modal" onclick="event.stopPropagation()">
       <header><div><span>Market Calendar</span><h2>Impact Calendar</h2><p>${esc(todayLabel())}</p></div><button data-close-calendar="1">Close</button></header>
       <div class="tabs calendar-tabs">${CALENDAR_TABS.map((tab) => `<button class="${state.calendarTab === tab ? "active" : ""}" data-calendar-tab="${tab}">${tab}</button>`).join("")}</div>
-      <div class="calendar-list">${calendarEvents().map((event) => `<button class="calendar-row" data-event="${esc(event.title)}" data-close-calendar="1"><b>${event.level}</b><span>${esc(event.title.replace("{ticker}", state.ticker))}</span><em>${esc(eventDateLabel(event))} · ${esc(event.category)}</em><small>${esc(event.time)}<br>${esc(event.impact)}</small></button>`).join("")}</div>
+      <div class="calendar-list">${items.length ? items.map((event) => `<button class="calendar-row" data-event="${esc(event.title)}" data-close-calendar="1"><b>${esc(event.level)}</b><span>${esc(event.title)}</span><em>${esc(event.dateLabel)} · ${esc(event.category)}</em><small>${esc(event.time)}<br>${esc(event.impact)}</small></button>`).join("") : `<div class="empty">No dated impact events returned by provider.</div>`}</div>
     </section>
   </div>`;
 }
 
 function sentimentBox(extra = "") {
+  const data = first(state.macro?.sentiment, state.analysis?.market_sentiment, {});
+  const score = first(data.score, data.value, data.market_score);
+  const label = first(data.label, data.state, data.regime);
+  const rowsData = {
+    Bullish: first(data.bullish_pct, data.bullish),
+    Neutral: first(data.neutral_pct, data.neutral),
+    Bearish: first(data.bearish_pct, data.bearish),
+  };
   return `<section class="sentiment-box ${extra}" data-testid="market-sentiment">
     <h3>Market Sentiment</h3>
     <div class="gauge"><i></i><i></i><i></i></div>
-    <strong>78</strong><b>BULLISH</b>
-    ${rows({Bullish: "62%", Neutral: "23%", Bearish: "15%"})}
+    <strong>${esc(hasValue(score) ? num(score, 0) : "-")}</strong><b>${esc(displayValue(label, "Not returned"))}</b>
+    ${rows(rowsData)}
   </section>`;
 }
 
@@ -454,30 +466,52 @@ async function load(ticker = state.ticker, tf = state.tf) {
   state.error = "";
   state.chartZoom = 1;
   state.chartOffset = 0;
+  state.company = null;
+  state.fundamental = null;
   renderContent();
-  try {
-    const [analysis, news, macro, company, fundamental, insiders] = await Promise.allSettled([
-      api(`/market/analysis?ticker=${encodeURIComponent(clean)}&period=${period}&interval=${interval}&include_mtf=${interval === "1d"}`),
-      api(`/market/news?ticker=${encodeURIComponent(clean)}`),
-      api(`/market/macro?ticker=${encodeURIComponent(clean)}`),
-      api(`/company-intelligence/${encodeURIComponent(clean)}`).catch(() => api(`/company/${encodeURIComponent(clean)}`)),
-      api(`/fundamental/${encodeURIComponent(clean)}`),
-      api(`/market/insiders?ticker=${encodeURIComponent(clean)}`),
-    ]);
-    if (analysis.status !== "fulfilled") throw analysis.reason;
-    state.analysis = analysis.value || {};
-    state.news = news.status === "fulfilled" ? arr(news.value?.items || news.value) : [];
-    state.macro = macro.status === "fulfilled" ? macro.value : null;
-    state.company = company.status === "fulfilled" ? company.value : null;
-    state.fundamental = fundamental.status === "fulfilled" ? fundamental.value : null;
-    state.insiders = insiders.status === "fulfilled" ? insiders.value : null;
-  } catch (e) {
-    state.error = e.message || "Unable to load market intelligence.";
-  } finally {
-    state.loading = false;
+  const companyRequest = api(`/company-intelligence/${encodeURIComponent(clean)}`).catch(() => api(`/company/${encodeURIComponent(clean)}`));
+  const [analysis, news, macro, fundamental, insiders] = await Promise.allSettled([
+    api(`/market/analysis?ticker=${encodeURIComponent(clean)}&period=${period}&interval=${interval}&include_mtf=${interval === "1d"}`),
+    api(`/market/news?ticker=${encodeURIComponent(clean)}`),
+    api(`/market/macro?ticker=${encodeURIComponent(clean)}`),
+    api(`/fundamental/${encodeURIComponent(clean)}`),
+    api(`/market/insiders?ticker=${encodeURIComponent(clean)}`),
+  ]);
+  state.analysis = analysis.status === "fulfilled" ? analysis.value || {} : {};
+  state.news = news.status === "fulfilled" ? arr(news.value?.items || news.value) : [];
+  state.macro = macro.status === "fulfilled" ? macro.value : null;
+  state.fundamental = fundamental.status === "fulfilled" ? fundamental.value : null;
+  state.insiders = insiders.status === "fulfilled" ? insiders.value : null;
+  state.error = analysis.status !== "fulfilled" ? analysis.reason?.message || "Market analysis was not returned by provider." : "";
+  state.loading = false;
+  shell();
+  renderContent();
+  companyRequest.then((company) => {
+    if (state.ticker !== clean) return;
+    state.company = company || null;
     shell();
     renderContent();
-  }
+  }).catch(() => {
+    if (state.ticker !== clean) return;
+    state.company = null;
+  });
+}
+
+function dataNotice() {
+  if (!state.error) return "";
+  const local = API.includes("127.0.0.1");
+  const hint = local
+    ? "Local API is not reachable on port 8000. Start the backend, then retry."
+    : "Provider request failed. Retry after the data service is healthy.";
+  return `<section class="data-notice">
+    <div><b>Data connection issue</b><span>${esc(state.error)}</span><small>${esc(hint)}</small></div>
+    <button id="retry" type="button">Retry</button>
+  </section>`;
+}
+
+function bindNotice() {
+  const retry = $("#retry");
+  if (retry) retry.onclick = () => load(state.ticker, state.tf);
 }
 
 function renderContent() {
@@ -487,23 +521,23 @@ function renderContent() {
     c.innerHTML = `<div class="state">Loading ${esc(state.ticker)} command center...</div>`;
     return;
   }
-  if (state.error) {
-    c.innerHTML = `<div class="error"><b>Data error</b><span>${esc(state.error)}</span><button id="retry">Retry</button></div>`;
-    $("#retry").onclick = () => load(state.ticker, state.tf);
-    return;
-  }
+  const showNotice = ["Dashboard", "Stock Analysis", "Technical", "Decision", "Risk", "Backtesting", "Trade Scanner"].includes(state.page);
+  const notice = showNotice ? dataNotice() : "";
   if (state.page === "Dashboard" || state.page === "Stock Analysis") {
-    c.innerHTML = tradingDesk();
+    c.innerHTML = notice + tradingDesk();
+    bindNotice();
     bindDesk();
     drawChart();
     return;
   }
   if (state.page === "Trade Scanner") {
-    c.innerHTML = tradeScannerPage();
+    c.innerHTML = notice + tradeScannerPage();
+    bindNotice();
     bindScanner();
     return;
   }
-  c.innerHTML = modulePage(state.page);
+  c.innerHTML = notice + modulePage(state.page);
+  bindNotice();
   bindDesk();
   drawChart();
 }
@@ -519,8 +553,8 @@ function tradingDesk() {
     <div class="desk">
       <section class="chart-zone">
         <div class="quote-head">
-          <div><h1>${esc(state.ticker)}</h1><span>${esc(profile.name || "NVIDIA Corporation")}</span><small>${esc(first(profile.sector, "Technology"))} - ${esc(first(profile.industry, "Semiconductors"))}</small></div>
-          <div class="price-block"><strong>${money(price)}</strong><em class="${change < 0 ? "bad" : "good"}">${change >= 0 ? "+" : ""}${pct(change)}</em><small>Real-time</small></div>
+          <div><h1>${esc(state.ticker)}</h1><span>${esc(displayValue(profile.name, state.ticker))}</span><small>${esc([profile.sector, profile.industry].filter(hasValue).join(" - ") || "Company classification not returned")}</small></div>
+          <div class="price-block"><strong>${money(price)}</strong><em class="${change < 0 ? "bad" : "good"}">${signedPct(change)}</em><small>Real-time</small></div>
           <div class="range"><label>Session Range</label><b title="Computed from returned intraday candle high/low values">${esc(stats.range)}</b><small>From live candles</small></div>
           <div class="range"><label>Session Volume</label><b>${esc(stats.volume)}</b><small>${num(a.volume_ratio)}x Avg</small></div>
           <div class="range"><label>Market Cap</label><b>${esc(displayValue(cap))}</b><small>Provider field</small></div>
@@ -556,24 +590,31 @@ function chartPanel() {
     </div>
     <div class="chart-stats">
       <div><span>Session Range</span><b>${esc(sessionStats().range)}</b></div>
-      <div><span>Session Volume</span><b>${esc(sessionStats().volume)}</b><em>${num(a.volume_ratio)}x Avg</em></div>
+      <div><span>Session Volume</span><b>${esc(sessionStats().volume)}</b><em>${hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x Avg` : "Volume ratio not returned"}</em></div>
       <div><span>Market Cap</span><b>${esc(displayValue(marketCap()))}</b></div>
       <div><span>Active Tool</span><b>${esc(state.chartTool)}</b><em>${esc(toolStatusText())}</em></div>
     </div>
     <div class="chart-shell">
-      <div class="indicator-list">
-        <b>EMA 9</b><em>944.21</em>
-        <b>EMA 20</b><em>942.11</em>
-        <b>EMA 50</b><em>939.27</em>
-        <b>VWAP</b><em>943.65</em>
-        <b>Volume</b><em>1.24M</em>
-      </div>
+      ${indicatorList()}
       <canvas id="chart" class="chart" data-testid="trading-chart"></canvas>
       <div id="charttip" class="charttip"></div>
     </div>
     <div id="chartReadout" class="chart-readout">Hover over a candle to inspect OHLC, volume, RSI and pattern context.</div>
     <div class="oscillator"><i></i><b>RSI (14)</b><span>MACD (12,26,9)</span></div>
   `);
+}
+
+function indicatorList() {
+  const a = state.analysis || {};
+  const items = [
+    ["SMA 20", a.sma_20 || a.sma20],
+    ["SMA 50", a.sma_50 || a.sma50],
+    ["SMA 200", a.sma_200 || a.sma200],
+    ["VWAP", a.vwap],
+    ["Volume", a.volume],
+  ].filter(([, value]) => hasValue(value));
+  if (!items.length) return `<div class="indicator-list muted"><b>Indicators</b><em>Not returned</em></div>`;
+  return `<div class="indicator-list">${items.map(([label, value]) => `<b>${esc(label)}</b><em>${esc(label === "Volume" ? compactNumber(value) : money(value))}</em>`).join("")}</div>`;
 }
 
 function toolIcon(tool) {
@@ -593,9 +634,15 @@ function toolStatusText() {
 function setupPanel() {
   const a = state.analysis || {};
   const signal = a.signal || "WAIT";
+  const price = Number(a.price);
+  const vwap = Number(a.vwap);
+  const vwapState = Number.isFinite(price) && Number.isFinite(vwap) ? (price >= vwap ? "Above" : "Below") : "Not returned";
+  const macdState = Number.isFinite(Number(a.macd)) && Number.isFinite(Number(a.macd_signal))
+    ? (Number(a.macd) >= Number(a.macd_signal) ? "Bullish" : "Bearish")
+    : "Not returned";
   return card("Trade Setup", `
-    <div class="setup-title"><div><strong>${esc(signal)} SETUP</strong><span>${signal === "BUY" ? "High Probability" : "Await confirmation"}</span></div><b>${num(a.setup_quality, 0)}<small>/100</small></b></div>
-    ${rows({Trend: a.trend || "-", Momentum: a.momentum || "-", Volume: `${num(a.volume_ratio)}x`, VWAP: "Above", "RSI (14)": num(a.rsi), MACD: a.macd >= a.macd_signal ? "Bullish" : "Neutral"})}
+    <div class="setup-title"><div><strong>${esc(signal)} SETUP</strong><span>${signal === "BUY" ? "High Probability" : "Await confirmation"}</span></div><b>${hasValue(a.setup_quality) ? num(a.setup_quality, 0) : "-"}<small>/100</small></b></div>
+    ${rows({Trend: a.trend, Momentum: a.momentum, Volume: hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x` : null, VWAP: vwapState, "RSI (14)": hasValue(a.rsi) ? num(a.rsi) : null, MACD: macdState})}
     <div class="stars">★★★★☆</div>
   `);
 }
@@ -603,15 +650,16 @@ function setupPanel() {
 function contextPanel() {
   const p = state.company?.profile || state.company || {};
   const a = state.analysis || {};
-  return card("Market Context", rows({
-    "Overall Market": "Bullish",
-    QQQ: "Bullish",
-    SPY: "Bullish",
-    Sector: first(p.sector, "Semiconductors"),
-    "Volatility (VIX)": "Moderate",
-    "Market Regime": first(a.trend, "Trending"),
-    Liquidity: "High",
-  }));
+  const sentiment = state.macro?.sentiment || {};
+  const context = {
+    "Overall Market": first(a.market_regime, a.market_context?.overall_market, state.macro?.market_regime, sentiment.label),
+    Sector: p.sector,
+    "Sector Trend": first(a.sector_trend, a.market_context?.sector_trend),
+    "Volatility (VIX)": first(a.vix_regime, a.market_context?.volatility, state.macro?.vix_regime),
+    "Market Regime": first(state.macro?.market_regime, sentiment.market_regime, a.trend, state.macro?.regime),
+    Liquidity: first(a.liquidity, a.market_context?.liquidity, hasValue(a.volume_ratio) ? `${num(a.volume_ratio)}x Avg Volume` : null),
+  };
+  return card("Market Context", rows(context));
 }
 
 function whyPanel() {
@@ -655,14 +703,15 @@ function patternPanel() {
 
 function livePricePanel() {
   const a = state.analysis || {};
-  return card("Live Price", `<div class="mini-price">${money(a.price)} <em class="${a.change_pct < 0 ? "bad" : "good"}">${a.change_pct >= 0 ? "+" : ""}${pct(a.change_pct)}</em></div><div class="mini-spark"></div><div class="day-range"><i></i></div>`);
+  return card("Live Price", `<div class="mini-price">${money(a.price)} <em class="${a.change_pct < 0 ? "bad" : "good"}">${signedPct(a.change_pct)}</em></div><div class="mini-spark"></div><div class="day-range"><i></i></div>`);
 }
 
 function aiPanel() {
   const a = state.analysis || {};
+  const probability = first(a.probability_of_continuation, a.continuation_probability, a.setup_quality);
   return card("AI Insight Summary", `
     <ul class="ai-list">
-      <li>Probability of continuation: ${num(first(a.setup_quality, 72), 0)}%</li>
+      <li>Probability of continuation: ${hasValue(probability) ? `${num(probability, 0)}%` : "Not returned"}</li>
       <li>Key support level: ${money(a.levels?.stop)}</li>
       <li>Key resistance level: ${money(a.levels?.target1)}</li>
       <li>Watch volume around key levels</li>
@@ -674,39 +723,36 @@ function impactCalendar() {
   const selected = calendarEvents();
   return card("Impact Calendar", `
     <div class="tabs">${CALENDAR_TABS.map((tab) => `<button class="${state.calendarTab === tab ? "active" : ""}" data-calendar-tab="${tab}">${tab}</button>`).join("")}</div>
-    <div class="impact-list">${selected.map((event) => `<button class="impact-row ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><b>${event.level}</b><span>${esc(event.title.replace("{ticker}", state.ticker))}<small>${esc(eventDateLabel(event))} · ${esc(event.time)}</small></span><em>${event.impact}</em></button>`).join("")}</div>
+    <div class="impact-list">${selected.length ? selected.map((event) => `<button class="impact-row ${event.level.toLowerCase()} ${state.selectedEvent === event.title ? "selected" : ""}" data-event="${esc(event.title)}"><b>${esc(event.level)}</b><span>${esc(event.title)}<small>${esc(event.dateLabel)} · ${esc(event.time)}</small></span><em>${esc(event.impact)}</em></button>`).join("") : `<div class="empty">No impact calendar events returned by provider.</div>`}</div>
   `);
 }
 
 function eventImpact() {
   const event = eventByTitle(state.selectedEvent);
+  if (!event) return card("Event Impact Analysis", `<div class="empty">No event impact details returned by provider.</div>`);
   return card("Event Impact Analysis", `
-    <h4>${esc(event.title.replace("{ticker}", state.ticker))}</h4>
-    <div class="event-meta"><span>${esc(event.level)}</span><span>${esc(event.category)}</span><span>${esc(eventDateLabel(event))}</span><span>${esc(event.time)}</span><span>${esc(event.impact)}</span></div>
-    <p class="small-copy">${esc(event.scenario.replace("{ticker}", state.ticker))}</p>
+    <h4>${esc(event.title)}</h4>
+    <div class="event-meta"><span>${esc(event.level)}</span><span>${esc(event.category)}</span><span>${esc(event.dateLabel)}</span><span>${esc(event.time)}</span><span>${esc(event.impact)}</span></div>
+    <p class="small-copy">${esc(event.scenario)}</p>
   `);
 }
 
 function eventByTitle(title) {
-  return EVENTS.find((event) => event.title === title) || EVENTS[0];
+  const events = calendarEvents();
+  return events.find((event) => event.title === title) || events[0] || null;
 }
 
 function calendarEvents() {
-  const now = new Date();
-  const upcoming = EVENTS.filter((event) => eventDateTime(event) >= new Date(now.getFullYear(), now.getMonth(), now.getDate()));
-  const source = state.calendarTab === "Upcoming" ? upcoming : EVENTS;
-  if (state.calendarTab === "All" || state.calendarTab === "Upcoming") return source;
-  return source.filter((event) => event.category === state.calendarTab);
-}
-
-function eventDateTime(event) {
-  const m = String(event.time || "").match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  let hour = m ? Number(m[1]) : 9;
-  const minute = m ? Number(m[2]) : 0;
-  const ap = m ? m[3].toUpperCase() : "AM";
-  if (ap === "PM" && hour < 12) hour += 12;
-  if (ap === "AM" && hour === 12) hour = 0;
-  return new Date(`${event.date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00-04:00`);
+  const direct = arr(first(state.macro?.events, state.macro?.calendar, state.macro?.economic_calendar, state.macro?.impact_calendar, state.macro?.items, state.macro?.rows));
+  const macroNews = [
+    ...arr(state.macro?.macro).map((event) => ({...event, category: first(event.category, "Macro")})),
+    ...arr(state.macro?.politics).map((event) => ({...event, category: first(event.category, "Politics")})),
+    ...arr(state.macro?.geopolitical).map((event) => ({...event, category: first(event.category, "Geopolitical")})),
+  ];
+  const raw = direct.length ? direct : macroNews;
+  const events = raw.map(normalizeEvent).filter((event) => event.title && event.title !== "Not returned");
+  if (state.calendarTab === "All" || state.calendarTab === "Upcoming") return events;
+  return events.filter((event) => String(event.category).toLowerCase().includes(state.calendarTab.toLowerCase()));
 }
 
 function todayLabel() {
@@ -714,26 +760,46 @@ function todayLabel() {
 }
 
 function eventDateLabel(event) {
-  const d = eventDateTime(event);
-  return d.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"});
+  return normalizeEvent(event).dateLabel;
 }
 
 function eventEta(event) {
-  const diff = eventDateTime(event) - new Date();
-  const abs = Math.abs(diff);
-  const mins = Math.round(abs / 60000);
-  if (diff < -6 * 3600000) return "completed";
-  if (diff < 0) return "released";
-  if (mins < 60) return `in ${mins}m`;
-  if (mins < 1440) return `in ${Math.floor(mins / 60)}h ${mins % 60}m`;
-  return `in ${Math.round(mins / 1440)}d`;
+  return normalizeEvent(event).status;
+}
+
+function normalizeEvent(event) {
+  const title = displayValue(first(event.title, event.name, event.event, event.label, event.description));
+  const category = displayValue(first(event.category, event.type, event.group, event.section, "Economic"));
+  const sentiment = event.sentiment || {};
+  const levelRaw = String(first(event.level, event.importance, sentiment.impact, event.impact_label, event.impact, event.severity, "INFO")).toUpperCase();
+  const level = levelRaw.includes("HIGH") ? "HIGH" : levelRaw.includes("MED") ? "MEDIUM" : levelRaw.includes("LOW") ? "LOW" : "INFO";
+  const when = first(event.datetime, event.date_time, event.starts_at, event.released_at, event.published_iso, event.published, event.updated_at, event.date, event.time);
+  const parsed = when && !Number.isNaN(new Date(when).getTime()) ? new Date(when) : null;
+  const dateLabel = parsed ? parsed.toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric", year: "numeric"}) : displayValue(first(event.date, event.day), "Date not returned");
+  const time = parsed ? parsed.toLocaleTimeString(undefined, {hour: "numeric", minute: "2-digit", timeZoneName: "short"}) : displayValue(first(event.time, event.hour), "Time not returned");
+  const status = displayValue(first(event.status, event.state, event.recency), parsed && parsed < new Date() ? "completed" : "upcoming");
+  return {
+    title,
+    category,
+    level,
+    dateLabel,
+    time,
+    status,
+    impact: displayValue(first(event.impact_label, sentiment.label, event.impact, event.importance, event.severity), level),
+    scenario: displayValue(first(event.analysis, event.summary, event.impact_summary, event.reason, event.description, event.note), "Provider did not return event impact detail."),
+    sourceUrl: first(event.url, event.link, event.source_url, "#"),
+    proof: displayValue(first(event.proof, event.source, event.publisher, event.source_name), "Provider source"),
+  };
 }
 
 function mtfPanel() {
   const a = state.analysis || {};
   const rows = arr(a.mtf);
-  const body = rows.length ? rows.map((r) => `<div class="mtf"><b>${esc(r.tf || r.label)}</b><span>${esc(r.data?.trend || r.trend || "-")}</span><em>${esc(r.data?.signal || r.signal || "WAIT")}</em></div>`).join("") : ["1D", "4H", "1H", "15m", "5m", "1m"].map((tf, i) => `<div class="mtf"><b>${tf}</b><span>${i < 5 ? "Bullish" : "Neutral"}</span><em>${i < 5 ? "Buy" : "Wait"}</em></div>`).join("");
-  return card("Multi-Timeframe Analysis", body + `<div class="confidence"><i style="width:${Math.min(100, Number(first(a.setup_quality, 72)))}%"></i></div>`);
+  const confidence = Number(first(a.mtf_confidence, a.setup_quality));
+  const body = rows.length
+    ? rows.map((r) => `<div class="mtf"><b>${esc(r.tf || r.label)}</b><span>${esc(r.data?.trend || r.trend || "Not returned")}</span><em>${esc(r.data?.signal || r.signal || "Not returned")}</em></div>`).join("")
+    : `<div class="empty compact">Multi-timeframe rows were not returned by provider.</div>`;
+  return card("Multi-Timeframe Analysis", body + (Number.isFinite(confidence) ? `<div class="confidence"><i style="width:${Math.min(100, confidence)}%"></i></div>` : ""));
 }
 
 function modulePage(page) {
@@ -803,18 +869,19 @@ function riskModule() {
 
 function researchModule(page) {
   const a = state.analysis || {};
-  const proofRows = EVENTS.map((event) => `<a class="proof-row" href="${esc(event.sourceUrl)}" target="_blank" rel="noreferrer"><b>${esc(eventDateLabel(event))}</b><span>${esc(event.title)}</span><em>${esc(event.time)} · ${esc(event.proof)}</em></a>`).join("");
+  const proofRows = calendarEvents().map((event) => `<a class="proof-row" href="${esc(event.sourceUrl)}" target="_blank" rel="noreferrer"><b>${esc(eventDateLabel(event))}</b><span>${esc(event.title)}</span><em>${esc(event.time)} · ${esc(event.proof)}</em></a>`).join("");
   return `<div class="module-hero"><span>${esc(page)}</span><h1>${esc(state.ticker)}</h1><p>Evidence, dates, sources, and validation context for the current setup.</p></div>
     <div class="module-grid">${metric("Decision", decisionTier())}${metric("Timeframe", decisionTimeframe())}${metric("Pattern", a.pattern?.name || "-")}${metric("Updated", a.updated_at ? new Date(a.updated_at).toLocaleString() : "-")}</div>
     ${card("Research Validation", `<p class="small-copy">Evidence research and backtesting are validation layers. They do not rewrite the production BUY/SELL/WATCH decision; they show why the setup is or is not supported.</p>${rows({Trend: a.trend || "-", Momentum: a.momentum || "-", RSI: num(a.rsi), "Volume Ratio": `${num(a.volume_ratio)}x`, Support: money(a.support), Resistance: money(a.resistance)})}`)}
-    ${card("Dates And Proofs", `<div class="proof-list">${proofRows}</div>`)}
+    ${card("Dates And Proofs", `<div class="proof-list">${proofRows || `<div class="empty compact">No dated proof rows returned by provider.</div>`}</div>`)}
     ${newsModule()}`;
 }
 
 function calendarPage() {
+  const proofRows = calendarEvents().map((event) => `<a class="proof-row ${event.level.toLowerCase()}" href="${esc(event.sourceUrl)}" target="_blank" rel="noreferrer"><b>${esc(eventDateLabel(event))}</b><span>${esc(event.title)}</span><em>${esc(event.time)} · ${esc(event.proof)}</em></a>`).join("");
   return `<div class="module-hero"><span>Dated Market Events</span><h1>Impact Calendar</h1><p>Scheduled macro, Fed, earnings and market events with source links and expected stock impact.</p></div>
     ${impactCalendar()}${eventImpact()}
-    ${card("Source Proofs", `<div class="proof-list">${EVENTS.map((event) => `<a class="proof-row ${event.level.toLowerCase()}" href="${esc(event.sourceUrl)}" target="_blank" rel="noreferrer"><b>${esc(eventDateLabel(event))}</b><span>${esc(event.title)}</span><em>${esc(event.time)} · ${esc(event.proof)}</em></a>`).join("")}</div>`)}`;
+    ${card("Source Proofs", `<div class="proof-list">${proofRows || `<div class="empty compact">No calendar source proofs returned by provider.</div>`}</div>`)}`;
 }
 
 function technicalModule() {
@@ -825,22 +892,70 @@ function technicalModule() {
 function companyModule() {
   const p = state.company?.profile || state.company || {};
   const s = state.company?.scores || {};
-  return `<div class="module-grid">${metric("Sector", p.sector)}${metric("Industry", p.industry)}${metric("Market Cap", money(first(p.market_cap, p.marketCap)))}${metric("Employees", p.employees?.toLocaleString?.())}${metric("Overall Score", num(s.overall_company_score, 1))}${metric("Financial Strength", num(s.financial_strength, 1))}</div>${card("Business Overview", `<p class="small-copy">${esc(p.description || p.summary || "Business summary unavailable from provider.")}</p>`)}`;
+  const cap = marketCap();
+  const hasProfilePayload = hasValue(p.sector) || hasValue(p.industry) || hasValue(p.name) || hasValue(p.description) || hasValue(p.summary) || cap !== "Not returned";
+  if (!hasProfilePayload) {
+    return card("Company Profile", `<div class="empty compact">Company profile is loading or was not returned by the provider. No placeholder company data is shown.</div>`);
+  }
+  const metrics = [
+    ["Sector", p.sector],
+    ["Industry", p.industry],
+    ["Market Cap", cap],
+    ["Employees", p.employees?.toLocaleString?.()],
+    ["Overall Score", hasValue(s.overall_company_score) ? num(s.overall_company_score, 1) : null],
+    ["Financial Strength", hasValue(s.financial_strength) ? num(s.financial_strength, 1) : null],
+  ];
+  const overview = first(p.description, p.summary);
+  return `<div class="module-grid">${metricList(metrics)}</div>${overview ? card("Business Overview", `<p class="small-copy">${esc(overview)}</p>`) : card("Company Profile", `<div class="empty compact">Company profile is still loading or was not returned by the provider.</div>`)}`;
 }
 
 function fundamentalModule() {
   const f = state.fundamental || {};
   const p = f.profile || {};
   const v = f.valuation || {};
-  return `<div class="module-grid">${metric("Fundamental Score", num(f.scores?.fundamental_score, 1))}${metric("Market Cap", money(first(p.market_cap, f.marketCap)))}${metric("P/E", num(first(v.trailing_pe, p.trailing_pe, f.trailingPE)))}${metric("Forward P/E", num(first(v.forward_pe, p.forward_pe, f.forwardPE)))}${metric("Revenue Growth", pct(Number(first(f.growth?.revenue_growth, f.revenueGrowth)) * 100))}${metric("EPS", money(first(f.earnings?.trailing_eps, f.epsTrailingTwelveMonths)))}</div>${insiderModule()}`;
+  const companyScores = state.company?.scores || {};
+  const revenueGrowth = first(f.growth?.revenue_growth, f.revenueGrowth, state.company?.profile?.revenue_growth);
+  const profitMargin = first(f.profitMargins, f.profit_margin, state.company?.profile?.profit_margin);
+  const roe = first(f.returnOnEquity, f.roe, state.company?.profile?.roe);
+  const metrics = [
+    ["Company Score", hasValue(first(f.scores?.fundamental_score, companyScores.overall_company_score)) ? num(first(f.scores?.fundamental_score, companyScores.overall_company_score), 1) : null],
+    ["Market Cap", first(p.market_cap, p.marketCap, f.marketCap, f.market_cap, state.company?.profile?.market_cap, state.company?.profile?.marketCap) ? money(first(p.market_cap, p.marketCap, f.marketCap, f.market_cap, state.company?.profile?.market_cap, state.company?.profile?.marketCap)) : null],
+    ["P/E", hasValue(first(v.trailing_pe, p.trailing_pe, f.trailingPE, f.trailing_pe, state.company?.profile?.trailing_pe)) ? num(first(v.trailing_pe, p.trailing_pe, f.trailingPE, f.trailing_pe, state.company?.profile?.trailing_pe)) : null],
+    ["Forward P/E", hasValue(first(v.forward_pe, p.forward_pe, f.forwardPE, f.forward_pe)) ? num(first(v.forward_pe, p.forward_pe, f.forwardPE, f.forward_pe)) : null],
+    ["Revenue Growth", hasValue(revenueGrowth) ? pct(Number(revenueGrowth) * (Math.abs(Number(revenueGrowth)) <= 1 ? 100 : 1)) : null],
+    ["EPS", hasValue(first(f.earnings?.trailing_eps, f.epsTrailingTwelveMonths, f.trailingEps, state.company?.earnings?.trailing_eps)) ? money(first(f.earnings?.trailing_eps, f.epsTrailingTwelveMonths, f.trailingEps, state.company?.earnings?.trailing_eps)) : null],
+    ["Profit Margin", hasValue(profitMargin) ? pct(Number(profitMargin) * (Math.abs(Number(profitMargin)) <= 1 ? 100 : 1)) : null],
+    ["ROE", hasValue(roe) ? pct(Number(roe) * (Math.abs(Number(roe)) <= 1 ? 100 : 1)) : null],
+    ["Dividend Yield", hasValue(first(f.dividendYield, f.dividend_yield)) ? pct(Number(first(f.dividendYield, f.dividend_yield)) * (Math.abs(Number(first(f.dividendYield, f.dividend_yield))) <= 1 ? 100 : 1)) : null],
+    ["Beta", hasValue(first(f.beta, state.company?.stock_level?.beta)) ? num(first(f.beta, state.company?.stock_level?.beta)) : null],
+  ];
+  return `<div class="module-grid">${metricList(metrics)}</div>
+    ${card("Fundamental Sources", rows({Source: first(f.source, "Provider fundamentals"), Updated: first(f.updated_at, state.analysis?.updated_at)}))}
+    ${insiderModule()}`;
 }
 
 function insiderModule() {
   const data = state.insiders || {};
   const items = arr(data.items).slice(0, 8);
   const holders = arr(data.holders).slice(0, 4);
-  const body = items.length ? items.map((r) => `<div class="insider-row"><b>${esc(first(r.Insider, r.insider, r.Name, r.name, "Insider"))}</b><span>${esc(first(r.Transaction, r.transaction, r.Type, r.type, "Activity"))}</span><em>${esc(first(r.StartDate, r.Date, r.date, ""))}</em></div>`).join("") : `<div class="empty">No recent insider transaction rows returned by the provider.</div>`;
-  const holderBody = holders.length ? `<div class="holder-list">${holders.map((r) => `<span>${esc(Object.values(r).filter(Boolean).slice(0, 2).join(" "))}</span>`).join("")}</div>` : "";
+  const holderLabels = {
+    insidersPercentHeld: "Insiders Held",
+    institutionsPercentHeld: "Institutions Held",
+    institutionsFloatPercentHeld: "Institution Float",
+    institutionsCount: "Institution Count",
+  };
+  const body = items.length ? items.map((r) => {
+    const date = first(r["Start Date"], r.StartDate, r.Date, r.date);
+    const action = first(r.Text, r.Transaction, r.transaction, r.Type, r.type, "Transaction detail not returned");
+    const shares = first(r.Shares, r.shares);
+    return `<div class="insider-row"><b>${esc(first(r.Insider, r.insider, r.Name, r.name, "Insider"))}</b><span>${esc(action)}</span><em>${esc([shares ? `${compactNumber(shares)} shares` : "", date ? new Date(date).toLocaleDateString() : ""].filter(Boolean).join(" · "))}</em></div>`;
+  }).join("") : `<div class="empty">No recent insider transaction rows returned by the provider.</div>`;
+  const holderBody = holders.length ? `<div class="holder-list">${holders.map((r) => {
+    const key = first(r.index, r.label, r.name);
+    const value = first(r.Value, r.value);
+    const rendered = String(key).includes("Count") ? compactNumber(value) : pct(Number(value) * 100);
+    return `<span><b>${esc(holderLabels[key] || key)}</b>${esc(rendered)}</span>`;
+  }).join("")}</div>` : "";
   return `${card("Insiders / Major Holders", `${body}${holderBody}<p class="small-copy">Celebrity or CEO buying is only shown when a public provider reports it. Unverified social-media claims are not used as proof.</p>`)}`;
 }
 
@@ -979,11 +1094,7 @@ async function runScanner() {
   state.scannerError = "";
   renderContent();
   try {
-    try {
-      state.scanner = await api(`/market/trade-scanner?limit=50&sector=${encodeURIComponent(state.scannerSector)}`);
-    } catch {
-      state.scanner = await fallbackTradeScanner();
-    }
+    state.scanner = await api(`/market/trade-scanner?limit=50&sector=${encodeURIComponent(state.scannerSector)}`);
   } catch (e) {
     state.scannerError = e.message || "Unable to scan trade opportunities.";
   } finally {
@@ -997,11 +1108,7 @@ async function runGeopolitics() {
   state.geopoliticalError = "";
   renderContent();
   try {
-    try {
-      state.geopolitical = await api("/market/geopolitics?limit=8");
-    } catch {
-      state.geopolitical = {items: GEOPOLITICS_FALLBACK, fallback: true};
-    }
+    state.geopolitical = await api("/market/geopolitics?limit=8");
   } catch (e) {
     state.geopoliticalError = e.message || "Unable to scan geopolitical policy impact.";
   } finally {
@@ -1069,7 +1176,7 @@ function drawChart() {
   const canvas = $("#chart");
   const a = state.analysis || {};
   const dataAll = arr(a.candles).filter((r) => [r.open, r.high, r.low, r.close].every((k) => Number.isFinite(Number(k))));
-  if (!canvas || !dataAll.length) return;
+  if (!canvas) return;
 
   const ctx = canvas.getContext("2d");
   const rect = canvas.getBoundingClientRect();
@@ -1079,12 +1186,31 @@ function drawChart() {
   canvas.width = Math.floor(W * dpr);
   canvas.height = Math.floor(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (!dataAll.length) {
+    ctx.clearRect(0, 0, W, H);
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, "#071827");
+    bg.addColorStop(1, "#06111d");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "#17304a";
+    ctx.strokeRect(18, 18, W - 36, H - 36);
+    ctx.fillStyle = "#8fa5bd";
+    ctx.font = "18px Inter, system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("No chart candles returned by provider for this timeframe.", W / 2, H / 2);
+    ctx.font = "13px Inter, system-ui";
+    ctx.fillText("Try another timeframe or retry after the data service refreshes.", W / 2, H / 2 + 28);
+    return;
+  }
 
-  const visible = Math.max(45, Math.min(dataAll.length, Math.floor(dataAll.length / state.chartZoom)));
-  const maxStart = Math.max(0, dataAll.length - visible);
-  const start = Math.max(0, Math.min(maxStart, Math.floor(state.chartOffset)));
-  const data = dataAll.slice(start, start + visible);
   const padL = 70, padR = 84, padT = 28, priceH = H * .68, volH = H * .16, oscY = priceH + volH + 34;
+  const baseVisible = Math.max(60, Math.min(120, Math.floor((W - padL - padR) / 8)));
+  const visible = Math.max(36, Math.min(dataAll.length, Math.floor(baseVisible / Math.max(1, state.chartZoom))));
+  const maxOffset = Math.max(0, dataAll.length - visible);
+  const offset = Math.max(0, Math.min(maxOffset, Math.floor(state.chartOffset)));
+  const start = Math.max(0, dataAll.length - visible - offset);
+  const data = dataAll.slice(start, start + visible);
   const min = Math.min(...data.map((r) => Number(r.low)), Number(a.levels?.stop || Infinity));
   const max = Math.max(...data.map((r) => Number(r.high)), Number(a.levels?.target2 || -Infinity));
   const span = max - min || 1;
@@ -1137,10 +1263,13 @@ function drawChart() {
   });
 
   if (state.chartTemplate !== "Clean Price") {
-    drawLevel(ctx, "ENTRY ZONE", a.levels?.entry, "#2e8cff", W, padL, padR, y);
-    drawLevel(ctx, "TARGET 1", a.levels?.target1, "#20e188", W, padL, padR, y);
-    drawLevel(ctx, "TARGET 2", a.levels?.target2, "#20e188", W, padL, padR, y);
-    drawLevel(ctx, "STOP LOSS", a.levels?.stop, "#ff5368", W, padL, padR, y);
+    const placedLevels = [];
+    [
+      ["T2", a.levels?.target2, "#20e188"],
+      ["T1", a.levels?.target1, "#20e188"],
+      ["Entry", a.levels?.entry, "#2e8cff"],
+      ["Stop", a.levels?.stop, "#ff5368"],
+    ].forEach(([label, value, color]) => drawLevel(ctx, label, value, color, W, padL, padR, priceH, y, placedLevels));
   }
 
   const last = data[data.length - 1];
@@ -1154,9 +1283,6 @@ function drawChart() {
     ctx.lineTo(lx + 58, ly + 22);
     ctx.lineTo(lx + 96, ly - 34);
     ctx.stroke();
-    ctx.fillStyle = "#1fe36f";
-    ctx.fillText("BREAKOUT", Math.max(padL + 20, lx - 110), Math.max(38, ly - 72));
-    ctx.fillText("BUY SIGNAL", Math.max(padL + 20, lx - 300), Math.max(60, ly - 26));
   }
 
   ctx.strokeStyle = "#263f59";
@@ -1164,18 +1290,23 @@ function drawChart() {
   ctx.moveTo(padL, oscY);
   ctx.lineTo(W - padR, oscY);
   ctx.stroke();
-  ctx.strokeStyle = "#8d55ff";
-  ctx.beginPath();
-  for (let i = 0; i < data.length; i++) {
-    const rsi = Number(first(data[i].rsi, 50 + Math.sin(i / 5) * 16));
-    const yy = oscY + 55 - (rsi / 100) * 90;
-    if (i) ctx.lineTo(x(i), yy); else ctx.moveTo(x(i), yy);
+  const rsiRows = data.map((row, index) => ({index, value: Number(row.rsi)})).filter((row) => Number.isFinite(row.value));
+  if (rsiRows.length > 1) {
+    ctx.strokeStyle = "#8d55ff";
+    ctx.beginPath();
+    rsiRows.forEach((row, index) => {
+      const yy = oscY + 55 - (row.value / 100) * 90;
+      if (index) ctx.lineTo(x(row.index), yy); else ctx.moveTo(x(row.index), yy);
+    });
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = "#6f89a4";
+    ctx.fillText("RSI not returned", padL + 4, oscY + 34);
   }
-  ctx.stroke();
 
   drawUserMarkers(ctx, W, H);
 
-  bindChartPointer(canvas, data, x, y, W, padL, padR);
+  bindChartPointer(canvas, data, x, y, W, padL, padR, visible);
 }
 
 function drawUserMarkers(ctx, W, H) {
@@ -1212,7 +1343,7 @@ function drawMovingAverage(ctx, data, n, x, y, color) {
   ctx.stroke();
 }
 
-function drawLevel(ctx, label, value, color, W, padL, padR, y) {
+function drawLevel(ctx, label, value, color, W, padL, padR, priceH, y, placed) {
   const v = Number(value);
   if (!Number.isFinite(v)) return;
   const yy = y(v);
@@ -1220,18 +1351,53 @@ function drawLevel(ctx, label, value, color, W, padL, padR, y) {
   ctx.setLineDash([9, 7]);
   ctx.beginPath();
   ctx.moveTo(padL, yy);
-  ctx.lineTo(W - padR, yy);
+  ctx.lineTo(W - padR - 8, yy);
   ctx.stroke();
   ctx.setLineDash([]);
+  const text = `${label} ${v.toFixed(2)}`;
+  ctx.font = "10px Inter, system-ui";
+  const width = Math.max(62, padR - 14);
+  let labelY = Math.max(22, Math.min(priceH - 12, yy));
+  for (let guard = 0; guard < 8 && placed.some((p) => Math.abs(p - labelY) < 18); guard++) {
+    labelY = Math.min(priceH - 12, labelY + 18);
+  }
+  if (placed.some((p) => Math.abs(p - labelY) < 18)) {
+    labelY = Math.max(22, Math.min(priceH - 12, yy - 18 * (placed.length + 1)));
+  }
+  placed.push(labelY);
+  const x0 = W - padR + 6;
+  ctx.fillStyle = "rgba(5, 18, 29, .92)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  roundedRect(ctx, x0, labelY - 10, width, 18, 5);
+  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = color;
-  ctx.fillText(`${label} ${money(v)}`, W - padR - 132, yy - 6);
+  ctx.fillText(text, x0 + 5, labelY + 2);
 }
 
-function bindChartPointer(canvas, data, x, y, W, padL, padR) {
+function roundedRect(ctx, x, y, w, h, r) {
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
+function bindChartPointer(canvas, data, x, y, W, padL, padR, visible) {
   const tip = $("#charttip");
   const readout = $("#chartReadout");
   let drag = false, sx = 0, old = 0;
-  const maxStart = Math.max(0, arr(state.analysis?.candles).length - data.length);
+  const maxOffset = Math.max(0, arr(state.analysis?.candles).length - visible);
   const show = (e) => {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -1250,7 +1416,7 @@ function bindChartPointer(canvas, data, x, y, W, padL, padR) {
   };
   canvas.onmousemove = show;
   canvas.onmouseleave = () => { if (tip) tip.style.display = "none"; };
-  canvas.onwheel = (e) => { e.preventDefault(); state.chartZoom = Math.max(1, Math.min(14, state.chartZoom * (e.deltaY < 0 ? 1.18 : .85))); state.chartOffset = Math.min(maxStart, state.chartOffset); drawChart(); };
+  canvas.onwheel = (e) => { e.preventDefault(); state.chartZoom = Math.max(1, Math.min(14, state.chartZoom * (e.deltaY < 0 ? 1.18 : .85))); state.chartOffset = Math.min(maxOffset, state.chartOffset); drawChart(); };
   canvas.onpointerdown = (e) => {
     if (state.chartTool === "Draw") {
       const rect = canvas.getBoundingClientRect();
@@ -1262,7 +1428,7 @@ function bindChartPointer(canvas, data, x, y, W, padL, padR) {
   };
   canvas.onpointermove = (e) => {
     if (!drag) return show(e);
-    state.chartOffset = Math.max(0, Math.min(maxStart, old - (e.clientX - sx) * data.length / Math.max(120, W)));
+    state.chartOffset = Math.max(0, Math.min(maxOffset, old + (e.clientX - sx) * data.length / Math.max(120, W)));
     drawChart();
   };
   canvas.onpointerup = canvas.onpointercancel = () => { drag = false; canvas.style.cursor = "crosshair"; };
