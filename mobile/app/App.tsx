@@ -1264,14 +1264,12 @@ function Loading({label, fullScreen = false}: {label: string; fullScreen?: boole
       imageStyle={!fullScreen ? styles.launchImage : undefined}
     >
       <View style={[styles.launchShade, fullScreen && styles.launchShadeFull]}>
-        {!fullScreen ? (
-          <View style={styles.launchContent}>
-            <View style={styles.launchProgress}><View style={styles.launchProgressFill} /></View>
-            <ActivityIndicator color="#55d9ff" />
-            <Text style={styles.launchText}>{label}</Text>
-            <Text style={styles.launchSubtext}>Preparing live market context, signals, and evidence.</Text>
-          </View>
-        ) : null}
+        <View style={styles.launchContent}>
+          <View style={styles.launchProgress}><View style={styles.launchProgressFill} /></View>
+          <ActivityIndicator color="#55d9ff" />
+          <Text style={styles.launchText}>{label}</Text>
+          <Text style={styles.launchSubtext}>Preparing live market context, signals, and evidence.</Text>
+        </View>
       </View>
     </ImageBackground>
   );
@@ -2371,7 +2369,7 @@ const styles = StyleSheet.create({
   launchScreenFull: {borderRadius: 0, borderWidth: 0, flex: 1, minHeight: "100%"},
   launchImage: {borderRadius: 18},
   launchShade: {alignItems: "center", backgroundColor: "rgba(1, 7, 18, 0.18)", flex: 1, justifyContent: "flex-end", paddingBottom: 54, paddingHorizontal: 28},
-  launchShadeFull: {backgroundColor: "transparent", paddingBottom: 0, paddingHorizontal: 0},
+  launchShadeFull: {backgroundColor: "rgba(1, 7, 18, 0.08)", paddingBottom: 70, paddingHorizontal: 28},
   launchContent: {alignItems: "center", gap: 12, width: "100%"},
   launchProgress: {backgroundColor: "rgba(85, 217, 255, 0.16)", borderRadius: 999, height: 3, maxWidth: 280, overflow: "hidden", width: "76%"},
   launchProgressFill: {backgroundColor: "#55d9ff", borderRadius: 999, height: 3, width: "58%"},
