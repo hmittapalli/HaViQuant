@@ -21,8 +21,6 @@ import * as SplashScreen from "expo-splash-screen";
 const APP_ICON = require("./assets/icon.png");
 const LAUNCH_IMAGE = require("./assets/splash.png");
 
-SplashScreen.preventAutoHideAsync().catch(() => {});
-
 type AnyRecord = Record<string, any>;
 type Page =
   | "Dashboard"
@@ -468,10 +466,8 @@ export default function App() {
   const macro = data.macro || {};
 
   useEffect(() => {
-    if (!loading) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [loading]);
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
   const submitTicker = () => {
     const clean = input.trim().toUpperCase();
