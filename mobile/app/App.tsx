@@ -1,6 +1,8 @@
 import React, {useCallback, useEffect, useState} from "react";
 import {
   ActivityIndicator,
+  Image,
+  ImageBackground,
   Linking,
   Pressable,
   SafeAreaView,
@@ -14,6 +16,9 @@ import {
   View,
 } from "react-native";
 import {Ionicons} from "@expo/vector-icons";
+
+const APP_ICON = require("./assets/icon.png");
+const LAUNCH_IMAGE = require("./assets/splash.png");
 
 type AnyRecord = Record<string, any>;
 type Page =
@@ -493,9 +498,7 @@ export default function App() {
       <StatusBar barStyle="light-content" />
       <View style={styles.topbar}>
         <View style={styles.brandRow}>
-          <View style={styles.logo}>
-            <Text style={styles.logoText}>HQ</Text>
-          </View>
+          <Image source={APP_ICON} style={styles.logoImage} />
           <View style={styles.brandText}>
             <Text style={styles.eyebrow}>MARKET INTELLIGENCE TERMINAL</Text>
             <Text style={styles.title}>HaViQuant</Text>
@@ -551,7 +554,7 @@ export default function App() {
         </View>
 
         {loading ? (
-          <Loading label="Loading intelligence..." />
+          <Loading label="Loading market intelligence..." />
         ) : (
           <>
             {error ? <ErrorBox error={error} retry={reload} /> : null}
@@ -648,7 +651,7 @@ function DesktopTerminal({
       <View style={styles.desktopShell}>
         <View style={styles.desktopSide}>
           <View style={styles.desktopBrand}>
-            <View style={styles.desktopLogo}><Text style={styles.logoText}>HQ</Text></View>
+            <Image source={APP_ICON} style={styles.desktopLogoImage} />
             <View>
               <Text style={styles.desktopBrandName}>HaViQuant</Text>
               <Text style={styles.desktopBrandSub}>Evidence. Edge. Execution.</Text>
@@ -687,7 +690,7 @@ function DesktopTerminal({
           <EventStrip macro={macro} />
 
           {loading ? (
-            <Loading label="Loading intelligence..." />
+            <Loading label="Loading market intelligence..." />
           ) : error ? (
             <ErrorBox error={error} retry={reload} />
           ) : page === "Dashboard" || page === "Stock Analysis" ? (
@@ -1245,10 +1248,16 @@ function Hero({ticker, name, badge}: {ticker: string; name?: string; badge: stri
 
 function Loading({label}: {label: string}) {
   return (
-    <View style={styles.stateBox}>
-      <ActivityIndicator color="#55d9ff" />
-      <Text style={styles.stateText}>{label}</Text>
-    </View>
+    <ImageBackground source={LAUNCH_IMAGE} resizeMode="cover" style={styles.launchScreen} imageStyle={styles.launchImage}>
+      <View style={styles.launchShade}>
+        <View style={styles.launchContent}>
+          <View style={styles.launchProgress}><View style={styles.launchProgressFill} /></View>
+          <ActivityIndicator color="#55d9ff" />
+          <Text style={styles.launchText}>{label}</Text>
+          <Text style={styles.launchSubtext}>Preparing live market context, signals, and evidence.</Text>
+        </View>
+      </View>
+    </ImageBackground>
   );
 }
 
@@ -2078,6 +2087,7 @@ const styles = StyleSheet.create({
   desktopSide: {backgroundColor: "#07111d", borderRightColor: "#18283d", borderRightWidth: 1, padding: 12, width: 218},
   desktopBrand: {alignItems: "center", flexDirection: "row", gap: 10, marginBottom: 14},
   desktopLogo: {alignItems: "center", backgroundColor: "#5b2cff", borderColor: "#24dcff", borderRadius: 8, borderWidth: 1, height: 34, justifyContent: "center", width: 34},
+  desktopLogoImage: {borderColor: "#24dcff", borderRadius: 8, borderWidth: 1, height: 34, width: 34},
   desktopBrandName: {color: "#edf5ff", fontSize: 20, fontWeight: "900"},
   proText: {color: "#a16bff"},
   desktopBrandSub: {color: "#c0ccda", fontSize: 11, marginTop: 2},
@@ -2180,6 +2190,7 @@ const styles = StyleSheet.create({
   brandRow: {alignItems: "center", flex: 1, flexDirection: "row", gap: 12, minWidth: 0},
   logo: {alignItems: "center", backgroundColor: "#6d38ff", borderColor: "#2de0ff", borderRadius: 10, borderWidth: 1, height: 36, justifyContent: "center", width: 36},
   logoText: {color: "#ffffff", fontSize: 12, fontWeight: "900"},
+  logoImage: {borderColor: "#2de0ff", borderRadius: 10, borderWidth: 1, height: 40, width: 40},
   brandText: {flex: 1, minWidth: 0},
   eyebrow: {color: "#55708e", fontSize: 8, fontWeight: "800", letterSpacing: 1.3},
   title: {color: "#eaf2ff", fontSize: 20, fontWeight: "900", marginTop: 1},
@@ -2339,6 +2350,14 @@ const styles = StyleSheet.create({
   valueValue: {color: "#eaf2ff", fontSize: 10, fontWeight: "900", marginLeft: 6},
   longText: {color: "#9aadc3", fontSize: 11, lineHeight: 17},
   noticeText: {backgroundColor: "#0b1928", borderColor: "#27405b", borderRadius: 9, borderWidth: 1, color: "#83a0bb", fontSize: 11, lineHeight: 17, padding: 10},
+  launchScreen: {borderColor: "#15314a", borderRadius: 18, borderWidth: 1, minHeight: 620, overflow: "hidden"},
+  launchImage: {borderRadius: 18},
+  launchShade: {alignItems: "center", backgroundColor: "rgba(1, 7, 18, 0.18)", flex: 1, justifyContent: "flex-end", paddingBottom: 54, paddingHorizontal: 28},
+  launchContent: {alignItems: "center", gap: 12, width: "100%"},
+  launchProgress: {backgroundColor: "rgba(85, 217, 255, 0.16)", borderRadius: 999, height: 3, maxWidth: 280, overflow: "hidden", width: "76%"},
+  launchProgressFill: {backgroundColor: "#55d9ff", borderRadius: 999, height: 3, width: "58%"},
+  launchText: {color: "#e8f2ff", fontSize: 15, fontWeight: "800", letterSpacing: 0.2, textAlign: "center"},
+  launchSubtext: {color: "#91a6bc", fontSize: 12, lineHeight: 17, maxWidth: 290, textAlign: "center"},
   stateBox: {alignItems: "center", gap: 10, justifyContent: "center", minHeight: 220},
   stateText: {color: "#657e99", fontSize: 13},
   errorBox: {backgroundColor: "#1d1112", borderColor: "#60322e", borderRadius: 12, borderWidth: 1, gap: 10, marginBottom: 16, padding: 16},
