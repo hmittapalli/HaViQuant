@@ -1099,15 +1099,86 @@ function scannerCard(item, index) {
       <span>${money(item.estimated_target_price)}</span>
     </div>
     <div class="confidence"><i style="width:${Math.max(0, Math.min(100, score))}%"></i></div>
-    <section class="scanner-thesis">
+    ${first(item.upside_thesis, why[0]) ? `<section class="scanner-thesis">
       <b>Why it can go up</b>
-      <p>${esc(first(item.upside_thesis, why[0], "Provider did not return a catalyst thesis."))}</p>
-    </section>
+      <p>${esc(first(item.upside_thesis, why[0]))}</p>
+    </section>` : ""}
     ${detailBlocks ? `<div class="scanner-detail">${detailBlocks}</div>` : ""}
     ${nextBlocks ? `<div class="scanner-next">${nextBlocks}</div>` : ""}
     <ul>${why.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>
     <div class="scanner-news">${articles.map((a) => `<a href="${esc(a.url || "#")}" target="_blank" rel="noreferrer">${esc(a.title || "Market headline")}</a>`).join("")}</div>
   </article>`;
+}
+
+function scannerUniverse() {
+  const selected = SECTOR_UNIVERSES[state.scannerSector];
+  return (selected && selected.length ? selected : SCAN_UNIVERSE).slice(0, 30);
+}
+
+function scannerItemFromAnalysis(a) {
+  const price = firstNumber(a.price, a.quote?.price);
+  const change = firstNumber(a.change_pct, a.quote?.change_pct);
+  const score = firstNumber(a.setup_quality, a.score, a.decision?.score, a.decision?.technical_score);
+  const volumeRatio = firstNumber(a.volume_ratio, a.technical?.volume_ratio, a.technical?.volumeRatio);
+  const rsi = firstNumber(a.rsi, a.technical?.rsi);
+  const sma20 = firstNumber(a.sma_20, a.sma20, a.technical?.sma_20, a.technical?.sma20);
+  const why = [
+    Number.isFinite(price) && Number.isFinite(sma20) && price > sma20 ? `Price is above the 20-day average (${money(sma20)}).` : "",
+    Number.isFinite(volumeRatio) && volumeRatio >= 1.2 ? `Volume is ${volumeRatio.toFixed(2)}x recent average.` : "",
+    Number.isFinite(rsi) && rsi >= 45 && rsi <= 75 ? `RSI is in a tradable range (${rsi.toFixed(1)}).` : "",
+    Number.isFinite(change) ? `Latest provider move is ${formatDelta(change)}.` : "",
+  ].filter(Boolean);
+  const risks = [
+    Number.isFinite(rsi) && rsi > 75 ? `RSI is extended (${rsi.toFixed(1)}).` : "",
+    Number.isFinite(price) && Number.isFinite(sma20) && price < sma20 ? `Price is below the 20-day average (${money(sma20)}).` : "",
+  ].filter(Boolean);
+  const computedScore = Number.isFinite(score)
+    ? score
+    : [
+      Number.isFinite(change) && change > 0 ? 20 : 0,
+      Number.isFinite(volumeRatio) && volumeRatio >= 1.2 ? 25 : 0,
+      Number.isFinite(price) && Number.isFinite(sma20) && price > sma20 ? 25 : 0,
+      Number.isFinite(rsi) && rsi >= 45 && rsi <= 75 ? 20 : 0,
+    ].reduce((sum, value) => sum + value, 0);
+  return {
+    ticker: a.ticker || a.symbol,
+    signal: first(a.signal, a.decision?.signal, computedScore >= 60 ? "WATCH" : ""),
+    score: computedScore,
+    price,
+    change_pct: change,
+    trend: first(a.trend, a.technical?.trend),
+    estimated_target_price: firstNumber(a.levels?.target1, a.resistance),
+    estimated_upside_pct: price && firstNumber(a.levels?.target1, a.resistance)
+      ? ((firstNumber(a.levels?.target1, a.resistance) / price - 1) * 100)
+      : null,
+    estimated_bullish_timeframe: first(a.eta_days ? `${a.eta_days} days` : "", a.timeframe),
+    why,
+    confirmation: why,
+    risk_watch: risks,
+    articles: [],
+  };
+}
+
+async function scannerFallback(reason) {
+  const symbols = scannerUniverse();
+  const settled = await Promise.allSettled(symbols.map((symbol) =>
+    api(`/market/analysis?ticker=${encodeURIComponent(symbol)}&period=3mo&interval=1d`)
+  ));
+  const items = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => scannerItemFromAnalysis(result.value))
+    .filter((item) => hasValue(item.ticker) && Number.isFinite(Number(item.price)))
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+    .slice(0, 50);
+  if (!items.length) throw Error(reason || "Unable to scan trade opportunities.");
+  return {
+    sector: state.scannerSector,
+    sectors: Object.keys(SECTOR_UNIVERSES),
+    universe_size: symbols.length,
+    items,
+    updated_at: new Date().toISOString(),
+    method: "Provider-backed chart scan from market analysis route.",
+  };
 }
 
 async function runScanner() {
@@ -1117,7 +1188,11 @@ async function runScanner() {
   try {
     state.scanner = await api(`/market/trade-scanner?limit=50&sector=${encodeURIComponent(state.scannerSector)}`);
   } catch (e) {
-    state.scannerError = e.message || "Unable to scan trade opportunities.";
+    try {
+      state.scanner = await scannerFallback(e.message);
+    } catch (fallbackError) {
+      state.scannerError = fallbackError.message || "Unable to scan trade opportunities.";
+    }
   } finally {
     state.scannerLoading = false;
     renderContent();
