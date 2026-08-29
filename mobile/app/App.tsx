@@ -16,9 +16,12 @@ import {
   View,
 } from "react-native";
 import {Ionicons} from "@expo/vector-icons";
+import * as SplashScreen from "expo-splash-screen";
 
 const APP_ICON = require("./assets/icon.png");
 const LAUNCH_IMAGE = require("./assets/splash.png");
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 type AnyRecord = Record<string, any>;
 type Page =
@@ -463,6 +466,12 @@ export default function App() {
   const {data, loading, error, reload} = useWorkspace(ticker, timeframe);
   const analysis = data.analysis || {};
   const macro = data.macro || {};
+
+  useEffect(() => {
+    if (!loading) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [loading]);
 
   const submitTicker = () => {
     const clean = input.trim().toUpperCase();
