@@ -72,6 +72,8 @@ const state = {
   geopoliticalLoading: false,
   geopoliticalError: "",
   macro: null,
+  fallbackMovers: null,
+  moversLoading: false,
   company: null,
   fundamental: null,
   insiders: null,
@@ -364,7 +366,7 @@ function events() {
 }
 
 function topMovers() {
-  const moverSource = first(state.macro?.top_movers, state.macro?.movers, state.analysis?.top_movers, {});
+  const moverSource = first(state.macro?.top_movers, state.macro?.movers, state.analysis?.top_movers, state.fallbackMovers, {});
   const data = state.moverMode === "Most Active"
     ? first(moverSource?.most_active, moverSource?.active, moverSource)
     : first(moverSource?.gainers, moverSource?.items, moverSource);
@@ -375,9 +377,49 @@ function topMovers() {
     change: first(item.change_pct, item.changePercent, item.percent_change),
     sector: first(item.sector, item.industry),
   })).filter((item) => hasValue(item.symbol));
-  if (!items.length) return "";
+  if (!items.length) return state.moversLoading
+    ? `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><span class="mover-status">Loading provider movers...</span></footer>`
+    : "";
   return `<footer class="movers" data-testid="top-movers"><b>TOP MOVERS</b><button class="${state.moverMode === "Gainers" ? "active" : ""}" data-mover-mode="Gainers">Gainers</button><button class="${state.moverMode === "Most Active" ? "active" : ""}" data-mover-mode="Most Active">Most Active</button>${items.map((item) => `
     <button data-mover="${esc(item.symbol)}" class="mover" data-tooltip="${esc(moverTooltip(item))}"><i>${esc(String(item.symbol).slice(0, 1))}</i><span>${esc(item.symbol)}</span><em class="${Number(item.change) < 0 ? "bad" : "good"}">${esc(formatDelta(item.change))}</em></button>`).join("")}</footer>`;
+}
+
+function hasTopMoverData() {
+  const source = first(state.macro?.top_movers, state.macro?.movers, state.analysis?.top_movers, state.fallbackMovers);
+  return arr(first(source?.gainers, source?.items, source?.most_active, source?.active, source)).some((item) =>
+    hasValue(first(item.symbol, item.ticker))
+  );
+}
+
+async function loadFallbackMovers() {
+  if (state.moversLoading || hasTopMoverData()) return;
+  state.moversLoading = true;
+  shell();
+  const symbols = SCAN_UNIVERSE.slice(0, 32);
+  const settled = await Promise.allSettled(symbols.map((symbol) =>
+    api(`/market/analysis?ticker=${encodeURIComponent(symbol)}&period=1mo&interval=1d`)
+  ));
+  const items = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => {
+      const a = result.value || {};
+      return {
+        symbol: first(a.ticker, a.symbol),
+        price: firstNumber(a.price, a.quote?.price),
+        change_pct: firstNumber(a.change_pct, a.quote?.change_pct),
+        volume: firstNumber(a.volume, a.quote?.volume),
+        score: firstNumber(a.setup_quality, a.score),
+      };
+    })
+    .filter((item) => hasValue(item.symbol) && Number.isFinite(Number(item.price)));
+  state.fallbackMovers = {
+    items: [...items].filter((item) => Number.isFinite(Number(item.change_pct))).sort((a, b) => Number(b.change_pct) - Number(a.change_pct)).slice(0, 12),
+    gainers: [...items].filter((item) => Number.isFinite(Number(item.change_pct))).sort((a, b) => Number(b.change_pct) - Number(a.change_pct)).slice(0, 12),
+    most_active: [...items].filter((item) => Number.isFinite(Number(item.volume))).sort((a, b) => Number(b.volume) - Number(a.volume)).slice(0, 12),
+  };
+  state.moversLoading = false;
+  shell();
+  renderContent();
 }
 
 function moverTooltip(item) {
@@ -467,6 +509,7 @@ function bindGlobalControls() {
     state.moverMode = b.dataset.moverMode;
     shell();
     renderContent();
+    loadFallbackMovers();
   });
 }
 
@@ -515,6 +558,7 @@ async function load(ticker = state.ticker, tf = state.tf) {
   state.chartOffset = 0;
   state.company = null;
   state.fundamental = null;
+  state.fallbackMovers = null;
   renderContent();
   const companyRequest = api(`/company-intelligence/${encodeURIComponent(clean)}`).catch(() => api(`/company/${encodeURIComponent(clean)}`));
   const [analysis, news, macro, fundamental, insiders] = await Promise.allSettled([
@@ -533,6 +577,7 @@ async function load(ticker = state.ticker, tf = state.tf) {
   state.loading = false;
   shell();
   renderContent();
+  loadFallbackMovers();
   companyRequest.then((company) => {
     if (state.ticker !== clean) return;
     state.company = company || null;
