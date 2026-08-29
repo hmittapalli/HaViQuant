@@ -493,6 +493,15 @@ export default function App() {
     );
   }
 
+  if (loading) {
+    return (
+      <View style={styles.launchRoot}>
+        <StatusBar barStyle="light-content" />
+        <Loading fullScreen label="Loading market intelligence..." />
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" />
@@ -553,23 +562,17 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        {loading ? (
-          <Loading label="Loading market intelligence..." />
-        ) : (
-          <>
-            {error ? <ErrorBox error={error} retry={reload} /> : null}
-            <PageContent
-              data={data}
-              page={page}
-              setPage={setPage}
-              setTimeframe={setTimeframe}
-              ticker={ticker}
-              timeframe={timeframe}
-              token={token}
-              setToken={setToken}
-            />
-          </>
-        )}
+        {error ? <ErrorBox error={error} retry={reload} /> : null}
+        <PageContent
+          data={data}
+          page={page}
+          setPage={setPage}
+          setTimeframe={setTimeframe}
+          ticker={ticker}
+          timeframe={timeframe}
+          token={token}
+          setToken={setToken}
+        />
       </ScrollView>
       <MobileBottomNav page={page} setPage={setPage} />
     </SafeAreaView>
@@ -1246,16 +1249,24 @@ function Hero({ticker, name, badge}: {ticker: string; name?: string; badge: stri
   );
 }
 
-function Loading({label}: {label: string}) {
+function Loading({label, fullScreen = false}: {label: string; fullScreen?: boolean}) {
   return (
-    <ImageBackground source={LAUNCH_IMAGE} resizeMode="cover" style={styles.launchScreen} imageStyle={styles.launchImage}>
-      <View style={styles.launchShade}>
-        <View style={styles.launchContent}>
-          <View style={styles.launchProgress}><View style={styles.launchProgressFill} /></View>
-          <ActivityIndicator color="#55d9ff" />
-          <Text style={styles.launchText}>{label}</Text>
-          <Text style={styles.launchSubtext}>Preparing live market context, signals, and evidence.</Text>
-        </View>
+    <ImageBackground
+      accessibilityLabel={label}
+      source={LAUNCH_IMAGE}
+      resizeMode="cover"
+      style={[styles.launchScreen, fullScreen && styles.launchScreenFull]}
+      imageStyle={!fullScreen ? styles.launchImage : undefined}
+    >
+      <View style={[styles.launchShade, fullScreen && styles.launchShadeFull]}>
+        {!fullScreen ? (
+          <View style={styles.launchContent}>
+            <View style={styles.launchProgress}><View style={styles.launchProgressFill} /></View>
+            <ActivityIndicator color="#55d9ff" />
+            <Text style={styles.launchText}>{label}</Text>
+            <Text style={styles.launchSubtext}>Preparing live market context, signals, and evidence.</Text>
+          </View>
+        ) : null}
       </View>
     </ImageBackground>
   );
@@ -2082,6 +2093,7 @@ function ValueRow({label, value}: {label: string; value: any}) {
 
 const styles = StyleSheet.create({
   safe: {flex: 1, backgroundColor: "#060b14"},
+  launchRoot: {backgroundColor: "#020814", flex: 1},
   desktopRoot: {backgroundColor: "#06101b", flex: 1},
   desktopShell: {flex: 1, flexDirection: "row"},
   desktopSide: {backgroundColor: "#07111d", borderRightColor: "#18283d", borderRightWidth: 1, padding: 12, width: 218},
@@ -2351,8 +2363,10 @@ const styles = StyleSheet.create({
   longText: {color: "#9aadc3", fontSize: 11, lineHeight: 17},
   noticeText: {backgroundColor: "#0b1928", borderColor: "#27405b", borderRadius: 9, borderWidth: 1, color: "#83a0bb", fontSize: 11, lineHeight: 17, padding: 10},
   launchScreen: {borderColor: "#15314a", borderRadius: 18, borderWidth: 1, minHeight: 620, overflow: "hidden"},
+  launchScreenFull: {borderRadius: 0, borderWidth: 0, flex: 1, minHeight: "100%"},
   launchImage: {borderRadius: 18},
   launchShade: {alignItems: "center", backgroundColor: "rgba(1, 7, 18, 0.18)", flex: 1, justifyContent: "flex-end", paddingBottom: 54, paddingHorizontal: 28},
+  launchShadeFull: {backgroundColor: "transparent", paddingBottom: 0, paddingHorizontal: 0},
   launchContent: {alignItems: "center", gap: 12, width: "100%"},
   launchProgress: {backgroundColor: "rgba(85, 217, 255, 0.16)", borderRadius: 999, height: 3, maxWidth: 280, overflow: "hidden", width: "76%"},
   launchProgressFill: {backgroundColor: "#55d9ff", borderRadius: 999, height: 3, width: "58%"},
