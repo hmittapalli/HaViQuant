@@ -405,6 +405,42 @@ function hideStockTooltip() {
   if (tip) tip.classList.remove("show");
 }
 
+function derivedMarketSentiment() {
+  const direct = first(state.macro?.sentiment, state.analysis?.market_sentiment);
+  if (direct && (hasValue(direct.score) || hasValue(direct.label) || hasValue(direct.state))) return direct;
+  const indexMoves = arr(first(
+    state.macro?.market_indices,
+    state.macro?.indices,
+    state.analysis?.market_indices,
+    state.analysis?.indices
+  ))
+    .map((item) => firstNumber(item.change_pct, item.changePercent, item.percent_change))
+    .filter((value) => Number.isFinite(value));
+  const tickerMove = firstNumber(state.analysis?.change_pct, state.analysis?.quote?.change_pct);
+  const moves = indexMoves.length ? indexMoves : (Number.isFinite(tickerMove) ? [tickerMove] : []);
+  const setupScore = firstNumber(state.analysis?.setup_quality, state.analysis?.score, state.analysis?.decision?.score);
+  const avgMove = moves.length ? moves.reduce((sum, value) => sum + value, 0) / moves.length : null;
+  const score = Number.isFinite(setupScore)
+    ? setupScore
+    : Number.isFinite(avgMove)
+      ? Math.max(0, Math.min(100, 50 + avgMove * 8))
+      : null;
+  const label = first(
+    state.macro?.market_regime,
+    state.analysis?.market_regime,
+    state.analysis?.trend,
+    Number.isFinite(score) ? (score >= 60 ? "Bullish" : score <= 40 ? "Bearish" : "Mixed") : ""
+  );
+  if (!Number.isFinite(score) && !hasValue(label)) return null;
+  return {
+    score,
+    label,
+    bullish_pct: Number.isFinite(score) && score > 55 ? 100 : null,
+    neutral_pct: Number.isFinite(score) && score >= 40 && score <= 55 ? 100 : null,
+    bearish_pct: Number.isFinite(score) && score < 40 ? 100 : null,
+  };
+}
+
 function bindGlobalControls() {
   $$("[data-open-calendar]").forEach((b) => b.onclick = () => {
     state.calendarOpen = true;
@@ -446,7 +482,7 @@ function calendarModal() {
 }
 
 function sentimentBox(extra = "") {
-  const data = first(state.macro?.sentiment, state.analysis?.market_sentiment, {});
+  const data = derivedMarketSentiment() || {};
   const score = first(data.score, data.value, data.market_score);
   const label = first(data.label, data.state, data.regime);
   if (!hasValue(score) && !hasValue(label)) return "";
