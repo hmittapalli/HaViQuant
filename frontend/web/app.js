@@ -18,6 +18,7 @@ const NAV_GROUPS = [
     ["Fundamentals", "Fundamentals"],
   ]},
   {label: "Decide", items: [
+    ["AI Trade Planner", "AI Trade Planner"],
     ["Decision", "Trade Setup"],
     ["Risk", "Risk Management"],
     ["Backtesting", "Backtesting"],
@@ -40,6 +41,7 @@ const ICONS = {
   "Backtesting": "backtest",
   "News": "news",
   "Calendar": "calendar",
+  "AI Trade Planner": "bolt",
 };
 
 const TIMEFRAMES = {
@@ -74,6 +76,18 @@ const state = {
   macro: null,
   fallbackMovers: null,
   moversLoading: false,
+  planner: null,
+  plannerLoading: false,
+  plannerError: "",
+  plannerForm: {
+    capital: 500,
+    risk_profile: "balanced",
+    strategy: "auto",
+    max_loss_amount: 25,
+    number_of_positions: 3,
+    allow_fractional_shares: true,
+    portfolio_aware: false,
+  },
   company: null,
   fundamental: null,
   insiders: null,
@@ -213,10 +227,10 @@ const marketCap = () => {
   return cap ? money(cap) : "Not returned";
 };
 
-async function api(path) {
+async function api(path, options = {}) {
   const token = localStorage.getItem("haviquant_access_token");
-  const headers = token ? {Authorization: `Bearer ${token}`} : {};
-  const r = await fetch(API + path, {headers});
+  const headers = {"Content-Type": "application/json", ...(options.headers || {}), ...(token ? {Authorization: `Bearer ${token}`} : {})};
+  const r = await fetch(API + path, {...options, headers});
   const raw = await r.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : null; } catch {}
@@ -613,7 +627,7 @@ function renderContent() {
     c.innerHTML = `<div class="state">Loading ${esc(state.ticker)} command center...</div>`;
     return;
   }
-  const showNotice = ["Dashboard", "Stock Analysis", "Technical", "Decision", "Risk", "Backtesting", "Trade Scanner"].includes(state.page);
+  const showNotice = ["Dashboard", "Stock Analysis", "Technical", "Decision", "Risk", "Backtesting", "Trade Scanner", "AI Trade Planner"].includes(state.page);
   const notice = showNotice ? dataNotice() : "";
   if (state.page === "Dashboard" || state.page === "Stock Analysis") {
     c.innerHTML = notice + tradingDesk();
@@ -626,6 +640,12 @@ function renderContent() {
     c.innerHTML = notice + tradeScannerPage();
     bindNotice();
     bindScanner();
+    return;
+  }
+  if (state.page === "AI Trade Planner") {
+    c.innerHTML = notice + tradePlannerPage();
+    bindNotice();
+    bindPlanner();
     return;
   }
   c.innerHTML = notice + modulePage(state.page);
@@ -907,6 +927,7 @@ function modulePage(page) {
   if (page === "Fundamentals") return `<div class="module-hero"><span>Fundamental Intelligence</span><h1>${esc(state.ticker)}</h1></div>${fundamentalModule()}`;
   if (page === "Technical") return `<div class="module-hero"><span>Technical Intelligence</span><h1>${esc(state.ticker)}</h1></div>${technicalModule()}`;
   if (page === "Decision") return decisionModule();
+  if (page === "AI Trade Planner") return tradePlannerPage();
   if (page === "Trade Scanner") return tradeScannerPage();
   if (page === "News") return `<div class="module-hero"><span>News & Events</span><h1>${esc(state.ticker)}</h1></div>${newsModule()}`;
   if (page === "Calendar") return calendarPage();
@@ -1304,6 +1325,195 @@ function bindScanner() {
   $$("[data-sector-chip]").forEach((b) => b.onclick = () => { state.scannerSector = b.dataset.sectorChip; state.scanner = null; runScanner(); });
   $$("[data-scan-open]").forEach((b) => b.onclick = () => load(b.dataset.scanOpen, state.tf));
   if (!state.scanner && !state.scannerLoading && !state.scannerError) runScanner();
+}
+
+function tradePlannerPage() {
+  const form = state.plannerForm;
+  const data = state.planner || {};
+  const recommendations = arr(data.recommendations);
+  return `
+    <div class="module-hero planner-hero">
+      <span>What Can My Money Do?</span>
+      <h1>AI Trade Planner</h1>
+      <p>Builds a risk-adjusted deployment plan from provider-backed market data, scanner candidates, technicals, fundamentals, news, policy risk, and historical forward returns.</p>
+    </div>
+    <section class="planner-console">
+      <label>Capital
+        <input id="plannerCapital" inputmode="decimal" value="${esc(form.capital)}" aria-label="Capital">
+      </label>
+      <label>Maximum Loss
+        <input id="plannerMaxLoss" inputmode="decimal" value="${esc(form.max_loss_amount)}" aria-label="Maximum loss">
+      </label>
+      <label>Positions
+        <select id="plannerPositions">${[1,2,3,5].map((n) => `<option value="${n}" ${Number(form.number_of_positions) === n ? "selected" : ""}>${n}</option>`).join("")}</select>
+      </label>
+      <div class="planner-segments" data-planner-group="risk_profile">
+        ${["conservative", "balanced", "aggressive"].map((v) => `<button class="${form.risk_profile === v ? "active" : ""}" data-planner-risk="${v}">${esc(v[0].toUpperCase() + v.slice(1))}</button>`).join("")}
+      </div>
+      <div class="planner-segments wide" data-planner-group="strategy">
+        ${[
+          ["auto", "AI Decide"],
+          ["day_trade", "Day"],
+          ["swing_trade", "Swing"],
+          ["position_trade", "Position"],
+          ["long_term", "Long Term"],
+        ].map(([v, label]) => `<button class="${form.strategy === v ? "active" : ""}" data-planner-strategy="${v}">${esc(label)}</button>`).join("")}
+      </div>
+      <label class="planner-toggle"><input id="plannerFractional" type="checkbox" ${form.allow_fractional_shares ? "checked" : ""}> Fractional shares</label>
+      <button id="runPlanner" class="planner-primary">${state.plannerLoading ? "Analyzing..." : "Analyze Opportunities"}</button>
+    </section>
+    ${state.plannerError ? `<div class="error"><b>Planner error</b><span>${esc(state.plannerError)}</span></div>` : ""}
+    ${state.plannerLoading ? `<div class="state">Building risk-adjusted trade plan from live data...</div>` : ""}
+    ${data.decision ? plannerResults(data, recommendations) : `<div class="empty planner-empty">Enter your capital and run the planner. The engine can deploy partially or recommend WAIT if the evidence is not strong enough.</div>`}
+  `;
+}
+
+function plannerResults(data, recommendations) {
+  const regime = data.market_regime || {};
+  const decision = data.decision || "WAIT";
+  const allocation = data.allocation || {};
+  return `
+    <section class="planner-result-head">
+      <div><span>AI Decision</span><strong class="${decision === "WAIT" ? "warn" : "good"}">${esc(decision)}</strong><em>${esc(data.summary || "")}</em></div>
+      <div><span>Deploy</span><strong>${money(allocation.allocated_capital)}</strong><em>Cash reserve ${money(data.cash_reserve)}</em></div>
+      <div><span>Expected Profit</span><strong>${money(data.expected_profit)}</strong><em>Expected return ${pct(Number(data.expected_portfolio_return || 0) * 100)}</em></div>
+      <div><span>Max Planned Risk</span><strong>${money(data.maximum_expected_loss)}</strong><em>Confidence ${num(data.confidence, 0)}/100</em></div>
+    </section>
+    ${card("Market Environment", `
+      ${rows({
+        Regime: regime.regime,
+        Trend: regime.trend,
+        Volatility: regime.volatility,
+        Confidence: hasValue(regime.confidence) ? `${num(regime.confidence, 0)}/100` : null,
+        "Data As Of": regime.market_data_as_of,
+      })}
+      <div class="planner-evidence-strip">${arr(regime.evidence).map((x) => `<span><b>${esc(x.symbol || x.ticker)}</b>${money(x.price)} <em class="${Number(x.change_pct) < 0 ? "bad" : "good"}">${esc(formatDelta(x.change_pct))}</em></span>`).join("")}</div>
+    `)}
+    ${recommendations.length ? `<div class="planner-recs">${recommendations.map(plannerCard).join("")}</div>` : plannerWait(data)}
+    ${plannerAlternatives(data)}
+    ${plannerRejected(data)}
+  `;
+}
+
+function plannerCard(item, index) {
+  const horizons = Object.entries(item.horizons || {}).filter(([, h]) => h && !h.insufficient_data);
+  const evidence = item.evidence || {};
+  const scenarios = item.scenarios || {};
+  return `<article class="planner-card">
+    <header>
+      <div><small>Rank ${index + 1}</small><button data-scan-open="${esc(item.ticker)}">${esc(item.ticker)}</button><span>${esc(item.company || item.sector || "")}</span></div>
+      <strong>${num(item.confidence, 0)}<em>/100</em></strong>
+    </header>
+    <div class="planner-metrics">
+      ${metric("Trade Type", plannerStrategyLabel(item.strategy))}
+      ${metric("Current Price", money(item.current_price))}
+      ${metric("Entry", money(item.entry))}
+      ${metric("Capital", money(item.capital_allocation))}
+      ${metric("Shares", num(item.shares, 3))}
+      ${metric("Target", money(item.target_1))}
+      ${metric("Stop", money(item.stop_loss))}
+      ${metric("Risk / Reward", hasValue(item.risk_reward) ? `1 : ${num(item.risk_reward)}` : "-")}
+      ${metric("Expected Return", pct(Number(item.expected_return || 0) * 100))}
+      ${metric("Expected Profit", money(item.expected_profit))}
+      ${metric("Possible Loss", money(item.possible_loss))}
+      ${metric("Positive Probability", hasValue(item.positive_probability) ? pct(Number(item.positive_probability) * 100) : "-")}
+    </div>
+    <div class="horizon-grid">${horizons.map(([label, h]) => `<div><b>${esc(label.toUpperCase())}</b><span>${pct(Number(h.expected_return || 0) * 100)}</span><em>${pct(Number(h.positive_probability || 0) * 100)} positive</em><small>${pct(Number(h.low_return || 0) * 100)} to ${pct(Number(h.high_return || 0) * 100)}</small></div>`).join("")}</div>
+    <div class="scenario-grid">${["bull", "base", "bear"].map((name) => {
+      const s = scenarios[name] || {};
+      return `<div><b>${esc(name.toUpperCase())}</b><span>${pct(Number(s.probability || 0) * 100)}</span><em>${pct(Number(s.return_percent || 0))} return</em></div>`;
+    }).join("")}</div>
+    <section class="planner-why">
+      <b>Why HaViQuant selected this</b>
+      <p>${esc(plannerWhyText(item, evidence))}</p>
+    </section>
+    <div class="evidence-grid">
+      ${plannerEvidence("Technical", evidence.technical)}
+      ${plannerEvidence("Volume", evidence.volume)}
+      ${plannerEvidence("Fundamental", evidence.fundamental)}
+      ${plannerEvidence("News", evidence.news_sentiment)}
+      ${plannerEvidence("Policy Risk", evidence.geopolitical_policy)}
+      ${plannerEvidence("Backtest", evidence.backtest)}
+    </div>
+  </article>`;
+}
+
+function plannerStrategyLabel(value) {
+  return ({
+    auto: "AI Decide",
+    day_trade: "Day Trade",
+    swing_trade: "Swing Trade",
+    position_trade: "Position Trade",
+    long_term: "Long Term",
+  })[value] || value;
+}
+
+function plannerWhyText(item, evidence) {
+  const pieces = [
+    hasValue(evidence.technical?.status) ? `technical trend is ${evidence.technical.status}` : "",
+    hasValue(evidence.momentum?.status) ? `momentum is ${evidence.momentum.status}` : "",
+    hasValue(evidence.volume?.evidence?.[0]?.value) ? `volume is ${num(evidence.volume.evidence[0].value)}x average` : "",
+    hasValue(evidence.pattern?.status) ? `pattern is ${evidence.pattern.status}` : "",
+    hasValue(evidence.geopolitical_policy?.status) ? `policy risk is ${evidence.geopolitical_policy.status}` : "",
+  ].filter(Boolean);
+  return pieces.length
+    ? `${item.ticker} ranks as a ${plannerStrategyLabel(item.strategy)} because ${pieces.join(", ")}. Allocation is limited by stop distance, confidence, and selected risk profile.`
+    : `${item.ticker} was selected from provider-backed scanner and analysis data. Review evidence before acting.`;
+}
+
+function plannerEvidence(title, data = {}) {
+  const evidence = arr(data.evidence).slice(0, 2).map((x) => first(x.metric && `${x.metric}: ${formatCell(x.value)}`, x.theme && `${x.theme}: ${formatCell(x.heat)} heat`, x.status, x.value)).filter(hasValue);
+  return `<div><b>${esc(title)}</b><span>${esc(formatCell(first(data.status, data.score)))}</span>${evidence.map((x) => `<em>${esc(x)}</em>`).join("")}</div>`;
+}
+
+function plannerWait(data) {
+  return `<section class="planner-wait"><strong>WAIT</strong><p>${esc(data.summary || "No opportunity satisfied the current planner criteria.")}</p>${arr(data.warnings).map((x) => `<span>${esc(x)}</span>`).join("")}</section>`;
+}
+
+function plannerAlternatives(data) {
+  const items = arr(data.alternative_strategies);
+  if (!items.length) return "";
+  return card("Strategy Comparison", `<div class="strategy-table">${items.map((x) => `<div><b>${esc(plannerStrategyLabel(x.strategy))}</b><span>${num(x.average_score, 1)}</span></div>`).join("")}</div>`);
+}
+
+function plannerRejected(data) {
+  const items = arr(data.rejected_candidates).slice(0, 8);
+  if (!items.length) return "";
+  return card("Rejected Candidates", `<div class="rejected-list">${items.map((x) => `<span><b>${esc(x.ticker)}</b>${esc(x.reason || "Did not pass planner criteria")}</span>`).join("")}</div>`);
+}
+
+async function runPlanner() {
+  const form = state.plannerForm;
+  form.capital = Number($("#plannerCapital")?.value || form.capital || 500);
+  form.max_loss_amount = Number($("#plannerMaxLoss")?.value || form.max_loss_amount || 0);
+  form.number_of_positions = Number($("#plannerPositions")?.value || form.number_of_positions || 3);
+  form.allow_fractional_shares = Boolean($("#plannerFractional")?.checked);
+  state.plannerLoading = true;
+  state.plannerError = "";
+  renderContent();
+  try {
+    state.planner = await api("/trade-planner/analyze", {
+      method: "POST",
+      body: JSON.stringify({
+        ...form,
+        sector: state.scannerSector,
+        portfolio_aware: false,
+      }),
+    });
+  } catch (e) {
+    state.plannerError = e.message || "Unable to build trade plan.";
+  } finally {
+    state.plannerLoading = false;
+    renderContent();
+  }
+}
+
+function bindPlanner() {
+  const run = $("#runPlanner");
+  if (run) run.onclick = runPlanner;
+  $$("[data-planner-risk]").forEach((b) => b.onclick = () => { state.plannerForm.risk_profile = b.dataset.plannerRisk; renderContent(); });
+  $$("[data-planner-strategy]").forEach((b) => b.onclick = () => { state.plannerForm.strategy = b.dataset.plannerStrategy; renderContent(); });
+  $$("[data-scan-open]").forEach((b) => b.onclick = () => load(b.dataset.scanOpen, state.tf));
 }
 
 function bindDesk() {

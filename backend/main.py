@@ -2,12 +2,13 @@ from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import math, os, re, statistics, urllib.parse, urllib.request, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 import pandas as pd
 import yfinance as yf
+from pydantic import BaseModel, Field
 
 try:
     # Works when FastAPI is started from the project root.
@@ -22,6 +23,22 @@ except Exception:
 APP_VERSION = "26.3.0"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+class TradePlannerRequest(BaseModel):
+    capital: float = Field(gt=0)
+    risk_profile: Literal["conservative", "balanced", "aggressive"] = "balanced"
+    strategy: Literal["auto", "day_trade", "swing_trade", "position_trade", "long_term"] = "auto"
+    holding_period: Optional[str] = None
+    max_loss_amount: Optional[float] = Field(default=None, ge=0)
+    max_loss_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    number_of_positions: int = Field(default=3, ge=1, le=5)
+    allow_fractional_shares: bool = True
+    cash_reserve_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    portfolio_aware: bool = False
+    symbols: Optional[list[str]] = None
+    sector: Optional[str] = None
+    market: str = "US"
 
 SCAN_UNIVERSE = [
     "SPCX", "NVDA", "AMD", "AVGO", "TSLA", "META", "MSFT", "AAPL", "AMZN", "GOOGL", "NFLX",
@@ -865,6 +882,331 @@ def macro(ticker:str=Query(...)):
         "sources": ["Yahoo Finance via yfinance", "Google News RSS"],
         "note": "Market context is derived from linked provider data and headlines. It does not deterministically predict price.",
     })
+
+TRADE_PLANNER_WEIGHTS = {
+    "day_trade": {"technical": .34, "momentum": .22, "volume": .22, "catalyst": .12, "fundamental": .04, "market": .06},
+    "swing_trade": {"technical": .32, "momentum": .22, "volume": .14, "catalyst": .14, "fundamental": .08, "market": .10},
+    "position_trade": {"technical": .22, "momentum": .14, "volume": .08, "catalyst": .10, "fundamental": .28, "market": .18},
+    "long_term": {"technical": .12, "momentum": .08, "volume": .04, "catalyst": .08, "fundamental": .48, "market": .20},
+}
+
+HORIZON_DAYS = {"1d": 1, "2d": 2, "5d": 5, "10d": 10, "20d": 20, "60d": 60}
+STRATEGY_HORIZONS = {
+    "day_trade": ["1d", "2d"],
+    "swing_trade": ["2d", "5d", "10d"],
+    "position_trade": ["10d", "20d", "60d"],
+    "long_term": ["20d", "60d"],
+}
+RISK_PROFILES = {
+    "conservative": {"reserve": 45, "min_score": 72, "risk": .006},
+    "balanced": {"reserve": 25, "min_score": 64, "risk": .012},
+    "aggressive": {"reserve": 10, "min_score": 56, "risk": .02},
+}
+
+
+def bounded(value, lo=0, hi=100):
+    try:
+        return max(lo, min(hi, float(value)))
+    except Exception:
+        return lo
+
+
+def trend_score(label):
+    text = str(label or "").lower()
+    if "bull" in text or "strong" in text: return 78
+    if "bear" in text or "weak" in text: return 24
+    if "mixed" in text or "neutral" in text: return 50
+    return 45
+
+
+def fundamental_score(data):
+    if not data:
+        return 45, []
+    pieces = []
+    evidence = []
+    pe = data.get("forwardPE") or data.get("trailingPE")
+    growth = data.get("revenueGrowth")
+    margin = data.get("profitMargins")
+    roe = data.get("returnOnEquity")
+    if pe is not None:
+        pe_score = 72 if float(pe) > 0 and float(pe) <= 30 else 56 if float(pe) <= 60 else 38
+        pieces.append(pe_score); evidence.append({"metric": "P/E", "value": pe})
+    if growth is not None:
+        growth_score = 75 if float(growth) >= .12 else 58 if float(growth) >= 0 else 35
+        pieces.append(growth_score); evidence.append({"metric": "Revenue growth", "value": growth})
+    if margin is not None:
+        margin_score = 74 if float(margin) >= .18 else 55 if float(margin) >= .05 else 36
+        pieces.append(margin_score); evidence.append({"metric": "Profit margin", "value": margin})
+    if roe is not None:
+        roe_score = 72 if float(roe) >= .15 else 54 if float(roe) >= .05 else 35
+        pieces.append(roe_score); evidence.append({"metric": "ROE", "value": roe})
+    return (round(statistics.mean(pieces), 1) if pieces else 45), evidence
+
+
+def historical_forecasts(ticker, price, stop, target):
+    try:
+        d = indicators(download(ticker, "5y", "1d"))
+    except Exception:
+        return {}
+    forecasts = {}
+    if len(d) < 90 or not price:
+        return forecasts
+    returns = d.Close.pct_change().dropna()
+    volatility = float(returns.tail(60).std() or 0)
+    trend_bonus = .15 if d.Close.iloc[-1] > d.SMA20.iloc[-1] else -.05
+    risk_floor = ((stop / price) - 1) if stop and price else -volatility
+    reward_cap = ((target / price) - 1) if target and price else volatility
+    for label, days in HORIZON_DAYS.items():
+        forward = (d.Close.shift(-days) / d.Close - 1).dropna()
+        if len(forward) < 40:
+            forecasts[label] = {"insufficient_data": True, "sample_size": int(len(forward))}
+            continue
+        avg = float(forward.tail(520).mean())
+        median = float(forward.tail(520).median())
+        positive = float((forward.tail(520) > 0).mean())
+        p20 = float(forward.tail(520).quantile(.2))
+        p80 = float(forward.tail(520).quantile(.8))
+        expected = (avg * .55) + (median * .25) + (trend_bonus * volatility * math.sqrt(days) * .20)
+        forecasts[label] = clean({
+            "sample_size": int(len(forward.tail(520))),
+            "avg_return": avg,
+            "median_return": median,
+            "positive_probability": round(positive, 3),
+            "expected_return": round(expected, 4),
+            "low_return": round(min(p20, risk_floor), 4),
+            "high_return": round(max(p80, reward_cap), 4),
+            "confidence": round(bounded(45 + min(35, len(forward) / 20) + abs(positive - .5) * 40), 1),
+        })
+    return forecasts
+
+
+def policy_event_assessment(symbol, sector=None):
+    relevant = []
+    for theme in geopolitical_scanner(limit=8).get("items", []):
+        tickers = set(theme.get("stocks_to_watch") or [])
+        exposed_text = " ".join((theme.get("benefiting_sectors") or []) + (theme.get("pressured_sectors") or [])).lower()
+        if symbol in tickers or (sector and str(sector).lower() in exposed_text):
+            relevant.append(theme)
+    if not relevant:
+        return {"score": 35, "status": "low", "evidence": []}
+    heat = max(float(x.get("heat") or 0) for x in relevant)
+    status = "critical" if heat >= 85 else "high" if heat >= 70 else "medium" if heat >= 55 else "low"
+    evidence = [{"theme": x.get("theme"), "heat": x.get("heat"), "direction": x.get("direction"), "source_count": len(x.get("articles") or [])} for x in relevant[:3]]
+    return clean({"score": heat, "status": status, "evidence": evidence})
+
+
+def planner_market_regime(seed_ticker="SPY"):
+    indices = market_indices()
+    sent = market_sentiment(indices)
+    confidence = bounded(50 + abs(float(sent.get("score") or 50) - 50))
+    return clean({
+        "regime": "risk_on" if sent.get("label") == "Bullish" else "risk_off" if sent.get("label") == "Bearish" else "neutral",
+        "confidence": round(confidence, 1),
+        "volatility": "elevated" if abs(float(sent.get("vix_change_pct") or 0)) >= 2 else "normal",
+        "trend": str(sent.get("label") or "Mixed").lower(),
+        "evidence": indices,
+        "market_data_as_of": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+def make_scenarios(expected, low, high, confidence, geopolitical_score):
+    risk_penalty = .08 if geopolitical_score >= 70 else .04 if geopolitical_score >= 55 else 0
+    bull = max(.2, min(.7, .46 + max(0, expected) * 2 - risk_penalty))
+    bear = max(.12, min(.55, .22 + max(0, -expected) * 2 + risk_penalty))
+    base = max(.05, 1 - bull - bear)
+    total = bull + base + bear
+    return clean({
+        "bull": {"probability": round(bull / total, 3), "return_percent": round(high * 100, 2)},
+        "base": {"probability": round(base / total, 3), "return_percent": round(expected * 100, 2)},
+        "bear": {"probability": round(bear / total, 3), "return_percent": round(low * 100, 2)},
+        "confidence": confidence,
+    })
+
+
+def planner_candidate(symbol, market_regime, strategy):
+    a = analysis(symbol, "6mo", "1d")
+    f = fundamentals(symbol)
+    n = news(symbol).get("items", [])
+    sector = f.get("profile", {}).get("sector")
+    fund_score, fund_evidence = fundamental_score(f)
+    policy = policy_event_assessment(symbol, sector)
+    tech = bounded(a.get("setup_quality"))
+    momentum = trend_score(a.get("momentum"))
+    volume = bounded(50 + (float(a.get("volume_ratio") or 1) - 1) * 18)
+    catalyst_delta, catalyst_terms, _ = score_catalysts(n)
+    catalyst = bounded(50 + catalyst_delta)
+    market = 70 if market_regime.get("regime") == "risk_on" else 32 if market_regime.get("regime") == "risk_off" else 50
+    scores = {}
+    for name, weights in TRADE_PLANNER_WEIGHTS.items():
+        scores[name] = round(
+            tech * weights["technical"] +
+            momentum * weights["momentum"] +
+            volume * weights["volume"] +
+            catalyst * weights["catalyst"] +
+            fund_score * weights["fundamental"] +
+            market * weights["market"],
+            1,
+        )
+    chosen_strategy = strategy if strategy != "auto" else max(scores, key=scores.get)
+    entry = float(a.get("price") or 0)
+    stop = float(a.get("levels", {}).get("stop") or 0)
+    target = float(a.get("levels", {}).get("target1") or 0)
+    forecasts = historical_forecasts(symbol, entry, stop, target)
+    applicable = {k: forecasts.get(k) for k in STRATEGY_HORIZONS.get(chosen_strategy, ["5d"]) if forecasts.get(k)}
+    selected_forecast = next((v for v in applicable.values() if not v.get("insufficient_data")), None)
+    expected = float(selected_forecast.get("expected_return") if selected_forecast else 0)
+    low = float(selected_forecast.get("low_return") if selected_forecast else -abs((entry - stop) / entry) if entry and stop else 0)
+    high = float(selected_forecast.get("high_return") if selected_forecast else (target / entry - 1) if entry and target else 0)
+    risk_per_share = max(0, entry - stop) if entry and stop else None
+    reward_per_share = max(0, target - entry) if entry and target else None
+    rr = reward_per_share / risk_per_share if risk_per_share else None
+    evidence = {
+        "technical": {"score": tech, "status": a.get("trend"), "evidence": [{"metric": "Setup quality", "value": a.get("setup_quality")}, {"metric": "RSI", "value": a.get("rsi")}, {"metric": "MACD", "value": a.get("macd")}]},
+        "momentum": {"score": momentum, "status": a.get("momentum"), "evidence": [{"metric": "Trend", "value": a.get("trend")}]},
+        "volume": {"score": volume, "status": "expanded" if float(a.get("volume_ratio") or 0) >= 1.4 else "normal", "evidence": [{"metric": "Volume ratio", "value": a.get("volume_ratio")}]},
+        "pattern": {"score": a.get("pattern", {}).get("confidence"), "status": a.get("pattern", {}).get("name"), "evidence": [{"metric": "Description", "value": a.get("pattern", {}).get("description")}]},
+        "fundamental": {"score": fund_score, "status": "provider_backed" if fund_evidence else "limited_data", "evidence": fund_evidence},
+        "news_sentiment": {"score": catalyst, "status": catalyst_terms[:3], "evidence": [{"metric": "Headline", "value": x.get("title"), "source": x.get("publisher"), "url": x.get("url")} for x in n[:3]]},
+        "market_regime": {"score": market, "status": market_regime.get("regime"), "evidence": market_regime.get("evidence")},
+        "geopolitical_policy": policy,
+        "backtest": {"score": selected_forecast.get("confidence") if selected_forecast else None, "status": "sufficient_data" if selected_forecast else "insufficient_data", "evidence": applicable},
+    }
+    return clean({
+        "ticker": symbol,
+        "company": f.get("profile", {}).get("name") or symbol,
+        "sector": sector,
+        "current_price": entry,
+        "strategy": chosen_strategy,
+        "holding_period": ", ".join(applicable.keys()) if applicable else None,
+        "scores": scores,
+        "selected_score": scores.get(chosen_strategy),
+        "entry": entry,
+        "target_1": target,
+        "stop_loss": stop,
+        "risk_reward": rr,
+        "expected_return": expected,
+        "positive_probability": selected_forecast.get("positive_probability") if selected_forecast else None,
+        "confidence": round(min(scores.get(chosen_strategy, 0), selected_forecast.get("confidence", 45) if selected_forecast else 45), 1),
+        "horizons": applicable,
+        "scenarios": make_scenarios(expected, low, high, selected_forecast.get("confidence", 45) if selected_forecast else 45, float(policy.get("score") or 0)),
+        "evidence": evidence,
+        "warnings": ["Historical sample was insufficient for one or more horizons."] if any(v.get("insufficient_data") for v in applicable.values()) else [],
+    })
+
+
+def build_trade_planner_response(req: TradePlannerRequest):
+    profile = RISK_PROFILES[req.risk_profile]
+    market_regime = planner_market_regime((req.symbols or ["SPY"])[0])
+    sector = urllib.parse.unquote(req.sector or "All")
+    symbols = req.symbols or [x.get("ticker") for x in trade_scanner(limit=20, sector=sector).get("items", [])]
+    candidates = []
+    rejected = []
+    for raw_symbol in symbols[:20]:
+        try:
+            c = planner_candidate(norm_ticker(raw_symbol), market_regime, req.strategy)
+            if float(c.get("selected_score") or 0) >= profile["min_score"] and c.get("risk_reward") and float(c["risk_reward"]) >= 1:
+                candidates.append(c)
+            else:
+                rejected.append({"ticker": raw_symbol, "reason": "Below planner score or risk/reward threshold", "score": c.get("selected_score"), "risk_reward": c.get("risk_reward")})
+        except Exception as e:
+            rejected.append({"ticker": raw_symbol, "reason": str(e)})
+    candidates.sort(key=lambda x: (x.get("confidence") or 0, x.get("selected_score") or 0), reverse=True)
+    selected = candidates[:req.number_of_positions]
+    reserve_pct = req.cash_reserve_percent if req.cash_reserve_percent is not None else profile["reserve"]
+    deployable = req.capital * (1 - reserve_pct / 100)
+    max_loss = req.max_loss_amount if req.max_loss_amount is not None else req.capital * ((req.max_loss_percent or (profile["risk"] * 100)) / 100)
+    if not selected:
+        return clean({
+            "request": req.model_dump(),
+            "market_regime": market_regime,
+            "decision": "WAIT",
+            "summary": "No candidate met the minimum risk/reward, confidence, and data-quality criteria. Keep capital in cash until evidence improves.",
+            "recommendations": [],
+            "allocation": {"allocated_capital": 0, "cash_reserve": req.capital, "positions": []},
+            "cash_reserve": req.capital,
+            "expected_portfolio_return": 0,
+            "expected_profit": 0,
+            "maximum_expected_loss": 0,
+            "confidence": market_regime.get("confidence"),
+            "alternative_strategies": [],
+            "rejected_candidates": rejected[:12],
+            "warnings": ["WAIT is valid when live provider evidence is insufficient or unattractive."],
+            "methodology": "Uses live market analysis, scanner rankings, fundamentals, news sentiment, policy risk, and historical forward-return distributions.",
+            "data_timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+    per_position = deployable / len(selected)
+    positions = []
+    total_expected_profit = 0
+    total_risk = 0
+    for c in selected:
+        price = float(c.get("current_price") or 0)
+        risk_per_share = max(0, price - float(c.get("stop_loss") or price))
+        raw_shares = per_position / price if price else 0
+        loss_limited_shares = (max_loss / len(selected)) / risk_per_share if risk_per_share else raw_shares
+        shares = min(raw_shares, loss_limited_shares)
+        if not req.allow_fractional_shares:
+            shares = math.floor(shares)
+        capital_allocated = shares * price
+        possible_loss = shares * risk_per_share
+        expected_profit = capital_allocated * float(c.get("expected_return") or 0)
+        total_expected_profit += expected_profit
+        total_risk += possible_loss
+        positions.append(clean({**c, "shares": shares, "capital_allocation": capital_allocated, "expected_profit": expected_profit, "possible_loss": possible_loss}))
+    allocated = sum(p.get("capital_allocation") or 0 for p in positions)
+    return clean({
+        "request": req.model_dump(),
+        "market_regime": market_regime,
+        "decision": "DEPLOY" if allocated > 0 else "WAIT",
+        "summary": f"HaViQuant found {len(positions)} provider-backed plan candidate{'s' if len(positions) != 1 else ''}. Allocation is constrained by risk profile, stop distance, confidence, and market regime.",
+        "recommendations": positions,
+        "allocation": {"allocated_capital": allocated, "cash_reserve": max(0, req.capital - allocated), "positions": positions},
+        "cash_reserve": max(0, req.capital - allocated),
+        "expected_portfolio_return": (total_expected_profit / allocated) if allocated else 0,
+        "expected_profit": total_expected_profit,
+        "maximum_expected_loss": total_risk,
+        "confidence": round(statistics.mean([float(p.get("confidence") or 0) for p in positions]), 1),
+        "alternative_strategies": [{"strategy": k, "average_score": round(statistics.mean([p["scores"].get(k, 0) for p in positions]), 1)} for k in TRADE_PLANNER_WEIGHTS],
+        "rejected_candidates": rejected[:12],
+        "warnings": sorted({w for p in positions for w in (p.get("warnings") or [])}),
+        "methodology": "Uses live market analysis, scanner rankings, fundamentals, news sentiment, policy risk, and historical forward-return distributions.",
+        "data_timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+@app.post("/api/v1/trade-planner/analyze")
+def trade_planner_analyze(req: TradePlannerRequest):
+    return build_trade_planner_response(req)
+
+
+@app.get("/api/v1/trade-planner/opportunities")
+def trade_planner_opportunities(limit:int=12, sector:Optional[str]=None):
+    req = TradePlannerRequest(capital=10000, risk_profile="balanced", strategy="auto", number_of_positions=max(1, min(5, int(limit))), sector=sector)
+    return build_trade_planner_response(req)
+
+
+@app.get("/api/v1/trade-planner/{symbol}")
+def trade_planner_symbol(symbol:str):
+    req = TradePlannerRequest(capital=10000, symbols=[norm_ticker(symbol)], strategy="auto")
+    return build_trade_planner_response(req)
+
+
+@app.get("/api/v1/trade-planner/{symbol}/horizons")
+def trade_planner_horizons(symbol:str):
+    c = planner_candidate(norm_ticker(symbol), planner_market_regime(symbol), "auto")
+    return clean({"ticker": norm_ticker(symbol), "horizons": c.get("horizons"), "scores": c.get("scores"), "data_timestamp": datetime.now(timezone.utc).isoformat()})
+
+
+@app.get("/api/v1/trade-planner/{symbol}/evidence")
+def trade_planner_evidence(symbol:str):
+    c = planner_candidate(norm_ticker(symbol), planner_market_regime(symbol), "auto")
+    return clean({"ticker": norm_ticker(symbol), "evidence": c.get("evidence"), "warnings": c.get("warnings"), "data_timestamp": datetime.now(timezone.utc).isoformat()})
+
+
+@app.get("/api/v1/trade-planner/{symbol}/backtest")
+def trade_planner_backtest(symbol:str):
+    a = analysis(norm_ticker(symbol), "6mo", "1d")
+    return clean({"ticker": norm_ticker(symbol), "backtest": historical_forecasts(norm_ticker(symbol), a.get("price"), a.get("levels", {}).get("stop"), a.get("levels", {}).get("target1")), "data_timestamp": datetime.now(timezone.utc).isoformat()})
+
 
 @app.get("/api/v1/market/insiders")
 def market_insiders(ticker:str=Query(...)): return insiders(norm_ticker(ticker))
