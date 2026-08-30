@@ -716,7 +716,7 @@ function DesktopTerminal({
                   <DecisionPage analysis={analysis} tradePlan={data.tradePlan || {}} ticker={ticker} />
                 </View>
               </View>
-              <BottomMovers macro={macro} watch={watch} chooseTicker={chooseTicker} />
+              <BottomMovers macro={macro} scanner={data.scanner} watch={watch} chooseTicker={chooseTicker} />
               <View style={styles.desktopLowerGrid}>
                 <ImpactCalendar macro={macro} />
                 <EventImpact macro={macro} ticker={ticker} />
@@ -920,7 +920,7 @@ function SentimentPanel({analysis, macro}: {analysis: AnyRecord; macro: AnyRecor
 }
 
 function SentimentBody({analysis, macro}: {analysis: AnyRecord; macro: AnyRecord}) {
-  const data = first(macro.sentiment, analysis.market_sentiment, analysis.market_context?.sentiment, {});
+  const data = first(macro.sentiment, analysis.market_sentiment, analysis.market_context?.sentiment, derivedSentiment(analysis, macro), {});
   const score = first(data.score, data.value, data.market_score);
   const label = first(data.label, data.state, data.regime, data.market_regime);
   if (!hasUsefulValue(score) && !hasUsefulValue(label)) {
@@ -938,10 +938,36 @@ function SentimentBody({analysis, macro}: {analysis: AnyRecord; macro: AnyRecord
   );
 }
 
-function moverItems(macro: AnyRecord, mode = "gainers") {
+function derivedSentiment(analysis: AnyRecord, macro: AnyRecord) {
+  const indices = arr(first(macro.market_indices, macro.indices, analysis.market_indices, analysis.indices));
+  const indexChanges = indices
+    .filter((item) => !String(first(item.symbol, item.ticker, "")).toUpperCase().includes("VIX"))
+    .map((item) => Number(first(item.change_pct, item.changePercent, item.percent_change)))
+    .filter(Number.isFinite);
+  const vix = indices.find((item) => String(first(item.symbol, item.ticker, "")).toUpperCase().includes("VIX"));
+  const vixChange = Number(first(vix?.change_pct, vix?.changePercent, vix?.percent_change, 0));
+  const setup = Number(first(analysis.decision?.technical_score, analysis.setup_quality));
+  const base = indexChanges.length
+    ? 50 + (indexChanges.reduce((sum, value) => sum + value, 0) / indexChanges.length) * 10 - (Number.isFinite(vixChange) ? vixChange * 2 : 0)
+    : Number.isFinite(setup) ? setup : null;
+  if (!Number.isFinite(Number(base))) return {};
+  const score = Math.max(0, Math.min(100, Number(base)));
+  const bullish = indexChanges.length ? indexChanges.filter((value) => value > 0).length / indexChanges.length * 100 : score >= 55 ? 66.7 : 0;
+  const bearish = indexChanges.length ? indexChanges.filter((value) => value < 0).length / indexChanges.length * 100 : score <= 45 ? 66.7 : 0;
+  return {
+    score,
+    label: score >= 60 ? "Bullish" : score <= 40 ? "Bearish" : "Mixed",
+    bullish_pct: bullish,
+    neutral_pct: Math.max(0, 100 - bullish - bearish),
+    bearish_pct: bearish,
+    source: indexChanges.length ? "Derived from returned index changes and VIX." : "Derived from available technical setup data.",
+  };
+}
+
+function moverItems(macro: AnyRecord, scanner?: AnyRecord, mode = "gainers") {
   const source = first(macro.top_movers, macro.movers, {});
   const data = mode === "active" ? first(source.most_active, source.active, source.items, source) : first(source.gainers, source.items, source);
-  return arr(data)
+  const primary = arr(data)
     .map((item) => ({
       change: first(item.change_pct, item.changePercent, item.percent_change),
       price: first(item.price, item.last, item.value),
@@ -949,10 +975,19 @@ function moverItems(macro: AnyRecord, mode = "gainers") {
     }))
     .filter((item) => item.symbol !== "Not returned")
     .slice(0, 12);
+  if (primary.length) return primary;
+  return arr(first(scanner?.items, scanner?.results))
+    .map((item) => ({
+      change: first(item.change_pct, item.changePercent, item.percent_change),
+      price: first(item.price, item.last, item.current_price),
+      symbol: text(first(item.symbol, item.ticker)),
+    }))
+    .filter((item) => item.symbol !== "Not returned")
+    .slice(0, 12);
 }
 
-function BottomMovers({macro, watch, chooseTicker}: {macro: AnyRecord; watch: string[]; chooseTicker: (ticker: string) => void}) {
-  const movers = moverItems(macro, "gainers");
+function BottomMovers({macro, scanner, watch, chooseTicker}: {macro: AnyRecord; scanner?: AnyRecord; watch: string[]; chooseTicker: (ticker: string) => void}) {
+  const movers = moverItems(macro, scanner, "gainers");
   const fallback = watch.map((symbol) => ({symbol, change: undefined, price: undefined}));
   const items = movers.length ? movers : fallback;
   return (
@@ -1070,7 +1105,7 @@ function PageContent({
         </TerminalGrid>
         <MarketTrendPanel analysis={analysis} />
         <SentimentPanel analysis={analysis} macro={macro} />
-        <TopMoversPanel macro={macro} />
+        <TopMoversPanel macro={macro} scanner={data.scanner} />
         <MetricGrid
           items={[
             ["Live Price", money(analysis.quote?.price)],
@@ -1387,8 +1422,32 @@ function ChartIntelPanel({analysis, timeframe}: {analysis: AnyRecord; timeframe:
   );
 }
 
-function TopMoversPanel({macro}: {macro: AnyRecord}) {
-  const movers = moverItems(macro, "gainers").slice(0, 6);
+function TopMoversPanel({macro, scanner}: {macro: AnyRecord; scanner?: AnyRecord}) {
+  const [fallbackScanner, setFallbackScanner] = useState<AnyRecord>({});
+  const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const sourceScanner = hasUsefulValue(scanner?.items) ? scanner : fallbackScanner;
+  const movers = moverItems(macro, sourceScanner, "gainers").slice(0, 6);
+
+  useEffect(() => {
+    if (movers.length || loading || failed) return;
+    let live = true;
+    setLoading(true);
+    api("/market/trade-scanner?limit=12&sector=All")
+      .then((result) => {
+        if (live) setFallbackScanner(result || {});
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      })
+      .finally(() => {
+        if (live) setLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [failed, loading, movers.length]);
+
   return (
     <Panel title="Top Movers">
       {movers.length ? movers.map((item) => (
@@ -1397,7 +1456,7 @@ function TopMoversPanel({macro}: {macro: AnyRecord}) {
           label={item.symbol}
           value={`${hasUsefulValue(item.price) ? money(item.price) : "Price not returned"} · ${hasUsefulValue(item.change) ? `${Number(item.change) >= 0 ? "+" : ""}${pct(item.change)}` : "Move not returned"}`}
         />
-      )) : <EmptyState label="Top movers feed not returned by provider." />}
+      )) : <EmptyState label={loading ? "Loading top movers from scanner feed..." : "Top movers feed not returned by provider."} />}
     </Panel>
   );
 }
@@ -1406,6 +1465,29 @@ function ScannerPage({ticker}: {ticker: string}) {
   const [sector, setSector] = useState(SECTORS[0]);
   const [trigger, setTrigger] = useState(SCAN_TRIGGERS[1]);
   const [interval, setInterval] = useState(ALERT_INTERVALS[1]);
+  const [scanner, setScanner] = useState<AnyRecord>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadScanner = useCallback(async (selectedSector = sector) => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api(`/market/trade-scanner?limit=20&sector=${encodeURIComponent(selectedSector)}`);
+      setScanner(result || {});
+    } catch (e: any) {
+      setError(e?.message || "Scanner API request failed.");
+      setScanner({});
+    } finally {
+      setLoading(false);
+    }
+  }, [sector]);
+
+  useEffect(() => {
+    loadScanner();
+  }, [loadScanner]);
+
+  const items = arr(scanner.items).slice(0, 10);
 
   return (
     <>
@@ -1418,7 +1500,7 @@ function ScannerPage({ticker}: {ticker: string}) {
         <Text style={styles.sectionLabel}>Sector scope</Text>
         <ScrollView directionalLockEnabled horizontal nestedScrollEnabled showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
           {SECTORS.map((item) => (
-            <TouchableOpacity key={item} onPress={() => setSector(item)} style={[styles.filterChip, sector === item && styles.filterChipActive]}>
+            <TouchableOpacity key={item} onPress={() => { setSector(item); loadScanner(item); }} style={[styles.filterChip, sector === item && styles.filterChipActive]}>
               <Text style={[styles.filterChipText, sector === item && styles.filterChipTextActive]}>{item}</Text>
             </TouchableOpacity>
           ))}
@@ -1447,9 +1529,39 @@ function ScannerPage({ticker}: {ticker: string}) {
         </View>
       </Panel>
       <Panel title="Current Top Candidates">
-        <EmptyState label={`Live top-50 scanner rankings were not returned for ${sector}. Keep the alert rule, then connect the scanner API feed for candidates, upside, catalysts, and timeframes.`} />
+        {loading ? <Loading label="Scanning catalysts, setups, volume, and policy risk..." /> : null}
+        {error ? <ErrorBox error={error} retry={() => loadScanner(sector)} /> : null}
+        {!loading && !error && items.length ? items.map((item, index) => (
+          <ScannerCandidate key={`${item.ticker || item.symbol}-${index}`} item={item} rank={index + 1} />
+        )) : null}
+        {!loading && !error && !items.length ? <EmptyState label={`No scanner candidates were returned for ${sector}. Try All or refresh after the provider updates.`} /> : null}
       </Panel>
     </>
+  );
+}
+
+function ScannerCandidate({item, rank}: {item: AnyRecord; rank: number}) {
+  const score = first(item.score, item.rank_score, item.technical_score);
+  const headline = first(item.upside_thesis, arr(item.why)[0], arr(item.articles)[0]?.title);
+  return (
+    <View style={styles.scannerCandidate}>
+      <View style={styles.candidateHead}>
+        <View>
+          <Text style={styles.sectionLabel}>Rank {rank}</Text>
+          <Text style={styles.candidateTicker}>{text(first(item.ticker, item.symbol))}</Text>
+        </View>
+        <Text style={styles.candidateScore}>{hasUsefulValue(score) ? num(score, 0) : "-"}</Text>
+      </View>
+      <MetricGrid
+        items={[
+          ["Price", money(first(item.price, item.current_price))],
+          ["Move", hasUsefulValue(item.change_pct) ? `${Number(item.change_pct) >= 0 ? "+" : ""}${pct(item.change_pct)}` : "Move not returned"],
+          ["Signal", text(first(item.signal, "WATCH"))],
+          ["Trend", text(item.trend)],
+        ]}
+      />
+      {hasUsefulValue(headline) ? <Text style={styles.longText}>{text(headline)}</Text> : null}
+    </View>
   );
 }
 
@@ -2123,6 +2235,10 @@ const styles = StyleSheet.create({
   sentimentBody: {gap: 4},
   sentimentScore: {color: "#2fed86", fontSize: 30, fontWeight: "900", textAlign: "center"},
   sentimentLabel: {color: "#2fed86", fontSize: 11, fontWeight: "900", marginBottom: 8, textAlign: "center"},
+  scannerCandidate: {backgroundColor: "#081827", borderColor: "#17304a", borderRadius: 8, borderWidth: 1, gap: 10, marginBottom: 10, padding: 12},
+  candidateHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between"},
+  candidateTicker: {color: "#eef5ff", fontSize: 22, fontWeight: "900"},
+  candidateScore: {color: "#20e188", fontSize: 28, fontWeight: "900"},
   desktopMain: {flex: 1, minWidth: 0},
   desktopTop: {alignItems: "center", flexDirection: "row", gap: 10, paddingHorizontal: 14, paddingTop: 10},
   desktopSearch: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, width: 300},
