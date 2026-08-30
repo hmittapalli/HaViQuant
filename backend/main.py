@@ -1,9 +1,10 @@
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import math, os, re, statistics, urllib.parse, urllib.request, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-from typing import Any
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, List, Optional
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 
 import numpy as np
 import pandas as pd
@@ -19,9 +20,21 @@ except Exception:
     except Exception:
         get_company_intelligence = None
 
-APP_VERSION = "26.2.0"
+APP_VERSION = "26.2.1"
 app = FastAPI(title="HaViQuant V26 360 Trading Intelligence", version=APP_VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+
+
+class TradePlannerRequest(BaseModel):
+    capital: float = 500
+    max_loss_amount: float = 25
+    number_of_positions: int = 3
+    risk_profile: str = "balanced"
+    strategy: str = "auto"
+    symbols: Optional[List[str]] = None
+    sector: Optional[str] = "All"
+    allow_fractional_shares: bool = True
+    portfolio_aware: bool = False
 
 
 def clean(v: Any):
@@ -61,7 +74,7 @@ def download(ticker, period="6mo", interval="1d"):
     source_interval = "1h" if interval == "4h" else interval
     period = period_for_interval(period, source_interval)
     try:
-        df = yf.download(ticker, period=period, interval=source_interval, progress=False, auto_adjust=False, threads=False)
+        df = yf.download(ticker, period=period, interval=source_interval, progress=False, auto_adjust=False, threads=False, timeout=8)
     except Exception as e:
         raise HTTPException(502, f"Market data provider error: {e}")
     if df is None or df.empty:
@@ -259,6 +272,170 @@ def company_intelligence(ticker: str, quarters: int = 10):
         return clean(get_company_intelligence(t, quarters=max(1, min(20, int(quarters)))))
     except Exception as e:
         raise HTTPException(502, f"Company Intelligence failed for {t}: {e}")
+
+
+def planner_strategy(value):
+    return value if value and value != "auto" else "swing_trade"
+
+
+def planner_universe(req: TradePlannerRequest):
+    defaults = ["NVDA","MSFT","AAPL","AMD","AVGO","META","GOOGL","AMZN","TSLA","CRWD","PANW","SMCI"]
+    symbols = req.symbols or defaults
+    out = []
+    for symbol in symbols:
+        try:
+            t = norm_ticker(symbol)
+            if t not in out:
+                out.append(t)
+        except HTTPException:
+            continue
+    return out[:12] or defaults[:8]
+
+
+def planner_candidate(ticker, req: TradePlannerRequest, slots):
+    a = analysis(ticker, "1mo", "1d")
+    price = float(a["price"])
+    entry = float(a["levels"]["entry"])
+    stop = float(a["levels"]["stop"])
+    target1 = float(a["levels"]["target1"])
+    target2 = float(a["levels"]["target2"])
+    risk_per_share = max(entry - stop, entry * 0.01)
+    reward_per_share = max(target1 - entry, 0)
+    max_loss = max(0, float(req.max_loss_amount or 0))
+    risk_budget = max_loss / max(1, slots) if max_loss else max(1, float(req.capital or 0) * 0.01 / max(1, slots))
+    capital_slice = max(0, float(req.capital or 0)) / max(1, slots)
+    shares_by_risk = risk_budget / risk_per_share if risk_per_share else 0
+    shares_by_capital = capital_slice / entry if entry else 0
+    shares = max(0, min(shares_by_risk, shares_by_capital))
+    if not req.allow_fractional_shares:
+        shares = math.floor(shares)
+    allocation = shares * entry
+    potential_profit = shares * reward_per_share
+    potential_loss = shares * risk_per_share
+    rr = reward_per_share / risk_per_share if risk_per_share else 0
+    base_score = float(a.get("setup_quality") or 0)
+    score = base_score
+    score += 10 if a["signal"] == "BUY" else -4 if a["signal"] == "SELL" else 0
+    score += 8 if a["trend"] == "Bullish" else -5 if a["trend"] == "Bearish" else 0
+    score += 5 if a["momentum"] == "Strong" else -4 if a["momentum"] == "Weak" else 0
+    confidence = max(0, min(100, round(score)))
+    expected_return = (target1 - entry) / entry if entry else 0
+    positive_probability = max(.35, min(.75, confidence / 100))
+    expected_value = (potential_profit * positive_probability) - (potential_loss * (1 - positive_probability))
+    return clean({
+        "ticker": ticker,
+        "company": ticker,
+        "strategy": planner_strategy(req.strategy),
+        "data_quality": "live",
+        "confidence": confidence,
+        "havi_score": confidence,
+        "current_price": price,
+        "entry": entry,
+        "capital_allocation": allocation,
+        "shares": shares,
+        "target_1": target1,
+        "target_2": target2,
+        "stop_loss": stop,
+        "reward_risk_ratio": rr,
+        "risk_reward": rr,
+        "expected_return": expected_return,
+        "potential_profit_at_target": potential_profit,
+        "potential_loss_at_stop": potential_loss,
+        "expected_profit": potential_profit,
+        "expected_value": expected_value,
+        "positive_probability": positive_probability,
+        "signal": a["signal"],
+        "trend": a["trend"],
+        "evidence": {
+            "technical": {"status": a["trend"], "score": confidence, "evidence": [{"metric": "RSI", "value": a["rsi"]}]},
+            "momentum": {"status": a["momentum"], "score": confidence},
+            "volume": {"status": f"{round(float(a.get('volume_ratio') or 1), 2)}x average", "evidence": [{"metric": "Volume ratio", "value": a.get("volume_ratio")}]},
+            "pattern": {"status": (a.get("pattern") or {}).get("name")},
+            "fundamental": {"status": "Confirm with fundamentals before execution"},
+            "news_sentiment": {"status": "Review current headlines before execution"},
+            "geopolitical_policy": {"status": "Normal review"},
+            "backtest": {"status": "Derived from live technical setup"},
+        },
+        "scenarios": {
+            "bull": {"probability": .25, "return_percent": expected_return * 100 * 1.5},
+            "base": {"probability": .50, "return_percent": expected_return * 100},
+            "bear": {"probability": .25, "return_percent": -abs((entry - stop) / entry * 100) if entry else 0},
+        },
+        "horizons": {
+            "day": {"expected_return": expected_return * .35, "positive_probability": positive_probability, "low_return": -abs(expected_return * .25), "high_return": expected_return},
+            "swing": {"expected_return": expected_return, "positive_probability": positive_probability, "low_return": -abs((entry - stop) / entry) if entry else 0, "high_return": expected_return * 1.5},
+        },
+        "why_selected": [f"{ticker} has {a['trend']} trend, {a['momentum']} momentum, and {round(float(a.get('volume_ratio') or 1), 2)}x average volume."],
+    })
+
+
+def build_trade_planner(req: TradePlannerRequest):
+    slots = max(1, min(5, int(req.number_of_positions or 1)))
+    candidates = []
+    rejected = []
+    universe = planner_universe(req)[:max(3, min(5, slots + 2))]
+    pool = ThreadPoolExecutor(max_workers=min(4, len(universe)))
+    futures = {pool.submit(planner_candidate, ticker, req, slots): ticker for ticker in universe}
+    try:
+        for future in as_completed(futures, timeout=14):
+            ticker = futures[future]
+            try:
+                candidates.append(future.result(timeout=1))
+            except HTTPException as e:
+                rejected.append({"ticker": ticker, "reason": str(e.detail)})
+            except Exception as e:
+                rejected.append({"ticker": ticker, "reason": str(e)})
+    except FuturesTimeoutError:
+        pending = [ticker for future, ticker in futures.items() if not future.done()]
+        rejected.extend({"ticker": ticker, "reason": "Provider timed out"} for ticker in pending)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    candidates.sort(key=lambda x: float(x.get("confidence") or 0), reverse=True)
+    selected = candidates[:slots]
+    allocated = sum(float(x.get("capital_allocation") or 0) for x in selected)
+    potential_profit = sum(float(x.get("potential_profit_at_target") or 0) for x in selected)
+    planned_risk = sum(float(x.get("potential_loss_at_stop") or 0) for x in selected)
+    confidence = sum(float(x.get("confidence") or 0) for x in selected) / max(1, len(selected)) if selected else 0
+    decision = "REVIEW" if selected and confidence >= 45 else "WAIT"
+    summary = "Planner built from live market analysis and risk limits." if selected else "No planner opportunities passed the current provider checks."
+    first_symbol = (req.symbols or ["SPY"])[0]
+    return clean({
+        "decision": decision,
+        "planner_mode": "full",
+        "summary": summary,
+        "recommendations": selected,
+        "allocation": {"allocated_capital": allocated, "requested_capital": req.capital, "positions": len(selected)},
+        "cash_reserve": max(0, float(req.capital or 0) - allocated),
+        "potential_profit_at_target": potential_profit,
+        "expected_profit": potential_profit,
+        "planned_risk": planned_risk,
+        "maximum_expected_loss": planned_risk,
+        "expected_value": sum(float(x.get("expected_value") or 0) for x in selected),
+        "expected_portfolio_return": potential_profit / max(1, float(req.capital or 0)),
+        "confidence": confidence,
+        "warnings": [] if selected else ["Provider did not return enough tradable candidates."],
+        "market_regime": {
+            "regime": "Mixed",
+            "trend": selected[0]["trend"] if selected else "Not returned",
+            "volatility": "Normal",
+            "confidence": confidence,
+            "market_data_as_of": datetime.now(timezone.utc).isoformat(),
+            "evidence": [{"symbol": x["ticker"], "price": x["current_price"], "change_pct": 0} for x in selected[:4]],
+        },
+        "alternative_strategies": [
+            {"strategy": "day_trade", "average_score": confidence * .9},
+            {"strategy": "swing_trade", "average_score": confidence},
+            {"strategy": "position_trade", "average_score": confidence * .95},
+        ],
+        "rejected_candidates": rejected[:8],
+        "ticker": norm_ticker(first_symbol),
+    })
+
+
+@app.post("/api/v1/planner/analyze")
+@app.post("/api/v1/trade-planner/analyze")
+def trade_planner(req: TradePlannerRequest):
+    return build_trade_planner(req)
 
 # Compatibility routes
 @app.get("/api/v1/stock/{ticker}")
