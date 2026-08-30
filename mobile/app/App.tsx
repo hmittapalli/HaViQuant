@@ -28,6 +28,7 @@ type Page =
   | "Company Intelligence"
   | "Fundamentals"
   | "Technical"
+  | "AI Trade Planner"
   | "Decision"
   | "Scanner"
   | "Alerts"
@@ -45,6 +46,7 @@ const PAGE_LABELS: Record<Page, string> = {
   "Company Intelligence": "HaVi 360",
   Fundamentals: "Fundamentals",
   Technical: "Technicals",
+  "AI Trade Planner": "AI Trade Planner",
   Decision: "Trade Setup",
   Scanner: "Trade Scanner",
   Alerts: "Alerts",
@@ -66,6 +68,7 @@ const NAV: {id: Page; icon: keyof typeof Ionicons.glyphMap}[] = [
   {id: "Stock Analysis", icon: "trending-up-outline"},
   {id: "Company Intelligence", icon: "business-outline"},
   {id: "Fundamentals", icon: "bar-chart-outline"},
+  {id: "AI Trade Planner", icon: "flash-outline"},
   {id: "Technical", icon: "pulse-outline"},
   {id: "Decision", icon: "flash-outline"},
   {id: "Scanner", icon: "scan-outline"},
@@ -82,8 +85,8 @@ const BOTTOM_NAV: {id: Page; label: string; icon: keyof typeof Ionicons.glyphMap
   {id: "Dashboard", label: "Pulse", icon: "pulse-outline"},
   {id: "Stock Analysis", label: "Finance", icon: "business-outline"},
   {id: "Scanner", label: "Scanner", icon: "scan-outline"},
+  {id: "AI Trade Planner", label: "Planner", icon: "flash-outline"},
   {id: "Company Intelligence", label: "360", icon: "analytics-outline"},
-  {id: "Alerts", label: "Alerts", icon: "notifications-outline"},
   {id: "Calendar", label: "Calendar", icon: "calendar-outline"},
 ];
 
@@ -296,6 +299,14 @@ function sessionStats(analysis: AnyRecord) {
 
 function marketCapText(profile: AnyRecord, fundamental?: AnyRecord) {
   return displayData(money(first(profile.market_cap, profile.marketCap, fundamental?.profile?.market_cap, fundamental?.profile?.marketCap, fundamental?.market_cap, fundamental?.marketCap)));
+}
+
+function firstNumber(...values: any[]) {
+  for (const value of values) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
 async function api(path: string, token?: string | null) {
@@ -1265,6 +1276,7 @@ function PageContent({
   if (page === "Company Intelligence") return <CompanyPage company={company} ticker={ticker} />;
   if (page === "Fundamentals") return <FundamentalsPage company={company} fundamental={fundamental} ticker={ticker} />;
   if (page === "Technical") return <TechnicalPage analysis={analysis} setTimeframe={setTimeframe} ticker={ticker} timeframe={timeframe} />;
+  if (page === "AI Trade Planner") return <AITradePlannerPage ticker={ticker} />;
   if (page === "Decision") return <DecisionPage analysis={analysis} tradePlan={tradePlan} ticker={ticker} />;
   if (page === "Scanner") return <ScannerPage ticker={ticker} />;
   if (page === "Alerts") return <AlertsPage analysis={analysis} news={news} ticker={ticker} />;
@@ -1752,7 +1764,7 @@ function ToggleRow({enabled, label, onPress, value}: {enabled: boolean; label: s
 }
 
 function MorePage({setPage}: {setPage: (page: Page) => void}) {
-  const pages = NAV.filter((item) => !["Dashboard", "Stock Analysis", "Company Intelligence", "Scanner", "Alerts", "Calendar", "Portfolio"].includes(item.id));
+  const pages = NAV.filter((item) => !["Dashboard", "Stock Analysis", "Company Intelligence", "Scanner", "AI Trade Planner", "Alerts", "Calendar", "Portfolio"].includes(item.id));
   return (
     <>
       <Hero ticker="More" badge="RESEARCH WORKSPACE" name="Open the deeper company, technical, decision, risk, backtesting, and news views." />
@@ -2000,6 +2012,198 @@ function TechnicalPage({
       <ChartIntelPanel analysis={analysis} timeframe={timeframe} />
       <OptionalDataList title="Multi-Timeframe Intelligence" data={analysis.technical?.mtf} />
     </>
+  );
+}
+
+function AITradePlannerPage({ticker}: {ticker: string}) {
+  const [capital, setCapital] = useState("500");
+  const [maxLoss, setMaxLoss] = useState("25");
+  const [positions, setPositions] = useState("3");
+  const [riskProfile, setRiskProfile] = useState("balanced");
+  const [strategy, setStrategy] = useState("auto");
+  const [planner, setPlanner] = useState<AnyRecord | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const buildFallbackPlan = useCallback(async (reason: string) => {
+    const scan = await scannerFeed("All", 12);
+    const candidates = arr(scan.items).slice(0, Math.max(1, Number(positions) || 1));
+    const usableCapital = Math.max(0, Number(capital || 0) - Number(maxLoss || 0));
+    const perPosition = candidates.length ? usableCapital / candidates.length : 0;
+    const recommendations = candidates.map((item) => {
+      const price = firstNumber(item.price, item.current_price) || 0;
+      const target = firstNumber(item.estimated_target_price, price ? price * 1.04 : null);
+      const stop = price ? price * 0.97 : null;
+      const expectedReturn = price && target ? target / price - 1 : 0;
+      const confidence = Math.max(0, Math.min(100, Number(first(item.score, item.rank_score, item.technical_score, 0))));
+      return {
+        ...item,
+        confidence,
+        current_price: price,
+        entry: price,
+        capital_allocation: perPosition,
+        shares: price ? perPosition / price : 0,
+        target_1: target,
+        stop_loss: stop,
+        expected_return: expectedReturn,
+        expected_profit: perPosition * expectedReturn,
+        possible_loss: candidates.length ? Number(maxLoss || 0) / candidates.length : 0,
+        strategy: strategy === "auto" ? "swing_trade" : strategy,
+      };
+    });
+    const allocated = recommendations.reduce((sum, item) => sum + Number(item.capital_allocation || 0), 0);
+    const expectedProfit = recommendations.reduce((sum, item) => sum + Number(item.expected_profit || 0), 0);
+    return {
+      decision: recommendations.length ? "REVIEW" : "WAIT",
+      summary: recommendations.length
+        ? "Planner API was unavailable, so this plan was built from live scanner and market-analysis data."
+        : "Planner API was unavailable and no scanner candidates were returned.",
+      recommendations,
+      allocation: {allocated_capital: allocated},
+      cash_reserve: Math.max(0, Number(capital || 0) - allocated),
+      expected_profit: expectedProfit,
+      expected_portfolio_return: allocated ? expectedProfit / allocated : 0,
+      maximum_expected_loss: Number(maxLoss || 0),
+      confidence: recommendations.length
+        ? recommendations.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / recommendations.length
+        : 0,
+      warnings: [`Fallback used because planner route failed: ${reason}`],
+    };
+  }, [capital, maxLoss, positions, strategy]);
+
+  const runPlanner = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const body = {
+        capital: Number(capital || 0),
+        max_loss_amount: Number(maxLoss || 0),
+        number_of_positions: Number(positions || 1),
+        risk_profile: riskProfile,
+        strategy,
+        symbols: [ticker, ...scannerUniverse("All")].slice(0, 12),
+        sector: "All",
+        allow_fractional_shares: true,
+        portfolio_aware: false,
+      };
+      try {
+        setPlanner(await postApi("/trade-planner/analyze", body));
+      } catch (e: any) {
+        setPlanner(await buildFallbackPlan(e?.message || "Planner API unavailable"));
+      }
+    } catch (e: any) {
+      setError(e?.message || "Unable to build AI trade plan.");
+    } finally {
+      setLoading(false);
+    }
+  }, [buildFallbackPlan, capital, maxLoss, positions, riskProfile, strategy, ticker]);
+
+  const recommendations = arr(planner?.recommendations).slice(0, 5);
+  return (
+    <>
+      <Hero
+        ticker="AI Trade Planner"
+        badge="WHAT CAN MY MONEY DO?"
+        name="Build a risk-adjusted deployment plan from scanner candidates, market data, technicals, and risk limits."
+      />
+      <Panel title="Planner Setup">
+        <TerminalGrid>
+          <View style={styles.formField}>
+            <Text style={styles.sectionLabel}>Capital</Text>
+            <TextInput keyboardType="decimal-pad" onChangeText={setCapital} style={styles.formInput} value={capital} />
+          </View>
+          <View style={styles.formField}>
+            <Text style={styles.sectionLabel}>Maximum Loss</Text>
+            <TextInput keyboardType="decimal-pad" onChangeText={setMaxLoss} style={styles.formInput} value={maxLoss} />
+          </View>
+        </TerminalGrid>
+        <Text style={styles.sectionLabel}>Positions</Text>
+        <View style={styles.segmentGrid}>
+          {["1", "2", "3", "5"].map((item) => (
+            <TouchableOpacity key={item} onPress={() => setPositions(item)} style={[styles.segmentButton, positions === item && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, positions === item && styles.segmentTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.sectionLabel}>Risk Profile</Text>
+        <View style={styles.segmentGrid}>
+          {["conservative", "balanced", "aggressive"].map((item) => (
+            <TouchableOpacity key={item} onPress={() => setRiskProfile(item)} style={[styles.segmentButton, riskProfile === item && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, riskProfile === item && styles.segmentTextActive]}>{item}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.sectionLabel}>Trade Horizon</Text>
+        <View style={styles.segmentGrid}>
+          {[
+            ["auto", "AI Decide"],
+            ["day_trade", "Day"],
+            ["swing_trade", "Swing"],
+            ["position_trade", "Position"],
+            ["long_term", "Long Term"],
+          ].map(([value, label]) => (
+            <TouchableOpacity key={value} onPress={() => setStrategy(value)} style={[styles.segmentButton, strategy === value && styles.segmentButtonActive]}>
+              <Text style={[styles.segmentText, strategy === value && styles.segmentTextActive]}>{label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity disabled={loading} onPress={runPlanner} style={styles.primaryButton}>
+          {loading ? <ActivityIndicator color="#7de6ff" /> : <Text style={styles.primaryButtonText}>Analyze Opportunities</Text>}
+        </TouchableOpacity>
+      </Panel>
+      {error ? <ErrorBox error={error} retry={runPlanner} /> : null}
+      {loading ? <Loading label="Building AI trade plan..." /> : null}
+      {planner ? (
+        <>
+          <MetricGrid
+            items={[
+              ["Decision", text(planner.decision)],
+              ["Deploy", money(planner.allocation?.allocated_capital)],
+              ["Cash Reserve", money(planner.cash_reserve)],
+              ["Expected Profit", money(planner.expected_profit)],
+              ["Max Risk", money(planner.maximum_expected_loss)],
+              ["Confidence", `${num(planner.confidence, 0)}/100`],
+            ]}
+          />
+          <Panel title="Planner Summary">
+            <Text style={styles.longText}>{text(planner.summary)}</Text>
+            {arr(planner.warnings).slice(0, 2).map((warning, index) => (
+              <Text key={index} style={styles.noticeText}>{text(warning)}</Text>
+            ))}
+          </Panel>
+          <Panel title="Recommended Opportunities">
+            {recommendations.length ? recommendations.map((item, index) => <PlannerCandidate key={`${item.ticker || item.symbol}-${index}`} item={item} rank={index + 1} />) : <EmptyState label="No planner opportunities passed the current risk settings." />}
+          </Panel>
+        </>
+      ) : !loading ? (
+        <EmptyState label="Enter capital and run the planner." />
+      ) : null}
+    </>
+  );
+}
+
+function PlannerCandidate({item, rank}: {item: AnyRecord; rank: number}) {
+  return (
+    <View style={styles.scannerCandidate}>
+      <View style={styles.candidateHead}>
+        <View>
+          <Text style={styles.sectionLabel}>Rank {rank}</Text>
+          <Text style={styles.candidateTicker}>{text(first(item.ticker, item.symbol))}</Text>
+        </View>
+        <Text style={styles.candidateScore}>{hasUsefulValue(item.confidence) ? num(item.confidence, 0) : num(first(item.score, item.rank_score), 0)}</Text>
+      </View>
+      <MetricGrid
+        items={[
+          ["Entry", money(first(item.entry, item.current_price, item.price))],
+          ["Capital", money(item.capital_allocation)],
+          ["Shares", num(item.shares, 3)],
+          ["Target", money(first(item.target_1, item.estimated_target_price))],
+          ["Stop", money(item.stop_loss)],
+          ["Expected Profit", money(item.expected_profit)],
+        ]}
+      />
+      <Text style={styles.longText}>{text(first(item.upside_thesis, arr(item.why)[0], "Review the returned evidence before acting."))}</Text>
+    </View>
   );
 }
 
@@ -2341,6 +2545,8 @@ const styles = StyleSheet.create({
   candidateHead: {alignItems: "center", flexDirection: "row", justifyContent: "space-between"},
   candidateTicker: {color: "#eef5ff", fontSize: 22, fontWeight: "900"},
   candidateScore: {color: "#20e188", fontSize: 28, fontWeight: "900"},
+  formField: {backgroundColor: "#081827", borderColor: "#1a2d44", borderRadius: 9, borderWidth: 1, flex: 1, minWidth: 138, padding: 10},
+  formInput: {borderColor: "#235f7c", borderRadius: 8, borderWidth: 1, color: "#eef5ff", fontSize: 15, fontWeight: "900", marginTop: 7, paddingHorizontal: 10, paddingVertical: 9},
   desktopMain: {flex: 1, minWidth: 0},
   desktopTop: {alignItems: "center", flexDirection: "row", gap: 10, paddingHorizontal: 14, paddingTop: 10},
   desktopSearch: {alignItems: "center", backgroundColor: "#0b1625", borderColor: "#20334b", borderRadius: 8, borderWidth: 1, flexDirection: "row", gap: 8, paddingHorizontal: 10, width: 300},
