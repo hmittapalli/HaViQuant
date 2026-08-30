@@ -1482,6 +1482,83 @@ function plannerRejected(data) {
   return card("Rejected Candidates", `<div class="rejected-list">${items.map((x) => `<span><b>${esc(x.ticker)}</b>${esc(x.reason || "Did not pass planner criteria")}</span>`).join("")}</div>`);
 }
 
+async function plannerFallback(reason) {
+  const form = state.plannerForm;
+  const scan = await scannerFallback(reason);
+  const candidates = arr(scan.items)
+    .filter((item) => hasValue(item.ticker) && Number.isFinite(Number(item.price)))
+    .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  const selected = candidates.slice(0, Math.max(1, Number(form.number_of_positions || 1)));
+  const usableCapital = Math.max(0, Number(form.capital || 0) - Number(form.max_loss_amount || 0));
+  const perPosition = selected.length ? usableCapital / selected.length : 0;
+  const recommendations = selected.map((item) => {
+    const price = firstNumber(item.price, item.current_price) || 0;
+    const target = firstNumber(item.estimated_target_price, price ? price * 1.04 : null);
+    const stop = price ? price * 0.97 : null;
+    const expectedReturn = price && target ? (target / price) - 1 : 0;
+    const shares = price ? perPosition / price : 0;
+    const confidence = Math.max(0, Math.min(100, Number(item.score || 0)));
+    return {
+      ticker: item.ticker,
+      company: item.company || item.sector || "",
+      strategy: form.strategy === "auto" ? "swing_trade" : form.strategy,
+      confidence,
+      current_price: price,
+      entry: price,
+      capital_allocation: perPosition,
+      shares: form.allow_fractional_shares ? shares : Math.floor(shares),
+      target_1: target,
+      stop_loss: stop,
+      risk_reward: price && target && stop && price > stop ? (target - price) / (price - stop) : null,
+      expected_return: expectedReturn,
+      expected_profit: perPosition * expectedReturn,
+      possible_loss: Number(form.max_loss_amount || 0) / selected.length,
+      positive_probability: confidence / 100,
+      evidence: {
+        technical: {status: item.trend || item.signal || "WATCH", score: confidence},
+        volume: {status: hasValue(item.volume_ratio) ? `${num(item.volume_ratio)}x average` : "Returned by scanner"},
+        news_sentiment: {status: first(arr(item.why)[0], item.upside_thesis, "Provider-backed scanner candidate")},
+        geopolitical_policy: {status: "Confirm before execution"},
+        backtest: {status: "Planner endpoint unavailable; using live scanner fallback"},
+      },
+      why: item.why,
+      articles: item.articles,
+    };
+  });
+  const allocated = recommendations.reduce((sum, item) => sum + Number(item.capital_allocation || 0), 0);
+  const expectedProfit = recommendations.reduce((sum, item) => sum + Number(item.expected_profit || 0), 0);
+  return {
+    decision: recommendations.length ? "REVIEW" : "WAIT",
+    summary: recommendations.length
+      ? "Planner endpoint was unavailable in prod, so HaViQuant built a provider-backed plan from live scanner and market analysis data."
+      : "Planner endpoint was unavailable and no provider-backed scanner candidates were returned.",
+    recommendations,
+    allocation: {allocated_capital: allocated},
+    cash_reserve: Math.max(0, Number(form.capital || 0) - allocated),
+    expected_profit: expectedProfit,
+    expected_portfolio_return: allocated ? expectedProfit / allocated : 0,
+    maximum_expected_loss: Number(form.max_loss_amount || 0),
+    confidence: recommendations.length
+      ? recommendations.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / recommendations.length
+      : 0,
+    market_regime: {
+      regime: "Provider-backed fallback",
+      trend: "Scanner derived",
+      volatility: "Confirm live",
+      confidence: recommendations.length ? 55 : 0,
+      market_data_as_of: new Date().toISOString(),
+      evidence: recommendations.map((item) => ({symbol: item.ticker, price: item.current_price, change_pct: first(candidates.find((c) => c.ticker === item.ticker)?.change_pct, 0)})),
+    },
+    alternative_strategies: [],
+    rejected_candidates: candidates.slice(recommendations.length, recommendations.length + 8).map((item) => ({
+      ticker: item.ticker,
+      reason: "Lower scanner rank than selected candidates",
+      score: item.score,
+    })),
+    warnings: ["Planner API route was not available in production. This fallback uses returned scanner and market-analysis data only."],
+  };
+}
+
 async function runPlanner() {
   const form = state.plannerForm;
   form.capital = Number($("#plannerCapital")?.value || form.capital || 500);
@@ -1501,7 +1578,12 @@ async function runPlanner() {
       }),
     });
   } catch (e) {
-    state.plannerError = e.message || "Unable to build trade plan.";
+    try {
+      state.planner = await plannerFallback(e.message);
+      state.plannerError = "";
+    } catch (fallbackError) {
+      state.plannerError = fallbackError.message || "Unable to build trade plan.";
+    }
   } finally {
     state.plannerLoading = false;
     renderContent();

@@ -1047,10 +1047,15 @@ nav button.active {
 }
 .planner-console {
   display: grid;
-  grid-template-columns: minmax(150px, 190px) minmax(150px, 190px) minmax(120px, 150px) minmax(260px, .8fr) minmax(380px, 1.2fr) auto minmax(210px, 260px);
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
   gap: 10px;
   align-items: stretch;
   margin-bottom: 12px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.planner-console > * {
+  min-width: 0;
 }
 .planner-console label,
 .planner-toggle {
@@ -1093,16 +1098,18 @@ nav button.active {
 }
 .planner-segments {
   display: flex;
+  flex-wrap: wrap;
   gap: 7px;
   align-items: center;
   border: 1px solid #1a2d44;
   border-radius: 8px;
   background: #0a1726;
   padding: 10px;
-  overflow-x: auto;
+  overflow: hidden;
 }
 .planner-segments button {
-  flex: 0 0 auto;
+  flex: 1 1 118px;
+  min-width: 0;
   border: 1px solid #203a58;
   border-radius: 999px;
   background: #081827;
@@ -1123,6 +1130,7 @@ nav button.active {
   background: linear-gradient(135deg, #0d415f, #1a2c61);
   color: #6fe7ff;
   font-weight: 950;
+  min-height: 66px;
   padding: 13px 16px;
 }
 .planner-result-head {
