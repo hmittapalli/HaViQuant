@@ -90,6 +90,15 @@ const BOTTOM_NAV: {id: Page; label: string; icon: keyof typeof Ionicons.glyphMap
 const SECTORS = ["All", "AI / Semiconductors", "Software / Cloud", "Biotech / Healthcare", "Space / Defense", "Energy", "Financials"];
 const SCAN_TRIGGERS = ["Top 10 new rank", "Score > 75", "BUY / STRONG BUY", "Upside > 5%", "Fresh catalyst", "Volume spike", "Policy impact"];
 const ALERT_INTERVALS = ["5 min", "15 min", "30 min", "1 hour", "Market open"];
+const SCAN_UNIVERSE = ["NVDA", "AMD", "AVGO", "MSFT", "META", "GOOGL", "TSLA", "AMZN", "CRWD", "PANW", "NET", "DDOG", "NOW", "ORCL", "MSTR", "COIN", "SHOP", "APP", "PLTR", "SMCI"];
+const SECTOR_UNIVERSES: Record<string, string[]> = {
+  "AI / Semiconductors": ["NVDA", "AMD", "AVGO", "ARM", "MU", "TSM", "SMCI", "QCOM"],
+  "Software / Cloud": ["MSFT", "GOOGL", "META", "SNOW", "CRWD", "PANW", "NET", "DDOG", "NOW", "CRM"],
+  "Biotech / Healthcare": ["MRNA", "PFE", "LLY", "NVO", "UNH", "VRTX", "REGN", "BIIB"],
+  "Space / Defense": ["RKLB", "BA", "LMT", "RTX", "NOC", "GE"],
+  Energy: ["XOM", "CVX", "OXY", "URA", "CCJ", "FCX", "NEM"],
+  Financials: ["JPM", "GS", "XLF", "COIN", "HOOD", "SOFI"],
+};
 
 const TIMEFRAME_OPTIONS = ["1m", "5m", "15m", "30m", "1H", "4H", "1D", "1W", "1M"] as const;
 type Timeframe = typeof TIMEFRAME_OPTIONS[number];
@@ -293,15 +302,39 @@ async function api(path: string, token?: string | null) {
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API}${path}`, {headers});
-  const body = await response.text();
-  const data = parseJson(body);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${API}${path}`, {headers});
+      const body = await response.text();
+      const data = parseJson(body);
 
-  if (!response.ok) {
-    throw new Error(data?.detail || body || `API request failed (${response.status})`);
+      if (!response.ok) {
+        const message = data?.detail || body || `API request failed (${response.status})`;
+        const retryable = [429, 500, 502, 503, 504].includes(response.status);
+        if (retryable && attempt < 2) {
+          lastError = new Error(message);
+          await delay(450 * (attempt + 1));
+          continue;
+        }
+        throw new Error(message);
+      }
+
+      return data;
+    } catch (e: any) {
+      lastError = e instanceof Error ? e : new Error(e?.message || "Network request failed");
+      if (attempt < 2) {
+        await delay(450 * (attempt + 1));
+        continue;
+      }
+    }
   }
 
-  return data;
+  throw lastError || new Error("Network request failed");
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function postApi(path: string, body: AnyRecord, token?: string | null) {
@@ -372,6 +405,77 @@ function normalizeAnalysis(data: AnyRecord) {
   };
 }
 
+async function marketAnalysis(ticker: string, timeframe: Timeframe) {
+  const tf = TIMEFRAME_API[timeframe];
+  const includeMtf = tf.interval === "1d";
+  try {
+    return await api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=${tf.period}&interval=${tf.interval}&include_mtf=${includeMtf}`);
+  } catch (e) {
+    if (tf.interval === "1d") throw e;
+    return api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=6mo&interval=1d&include_mtf=true`);
+  }
+}
+
+function scannerUniverse(sector = "All") {
+  return (SECTOR_UNIVERSES[sector] || SCAN_UNIVERSE).slice(0, 12);
+}
+
+function scannerItemFromAnalysis(data: AnyRecord) {
+  const normalized: AnyRecord = normalizeAnalysis(data || {});
+  const technical: AnyRecord = normalized.technical || {};
+  const price = Number(first(normalized.quote?.price, technical.price));
+  const change = Number(first(normalized.quote?.change_pct, data.change_pct));
+  const volumeRatio = Number(first(technical.volume_ratio, data.volume_ratio));
+  const rsi = Number(technical.rsi);
+  const score = Number(first(normalized.decision?.technical_score, data.setup_quality));
+  const computedScore = Number.isFinite(score)
+    ? score
+    : [
+      Number.isFinite(change) && change > 0 ? 20 : 0,
+      Number.isFinite(volumeRatio) && volumeRatio >= 1.2 ? 25 : 0,
+      String(first(technical.trend, data.trend, "")).toLowerCase().includes("bull") ? 25 : 0,
+      Number.isFinite(rsi) && rsi >= 45 && rsi <= 75 ? 20 : 0,
+    ].reduce((sum, value) => sum + value, 0);
+  const why = [
+    Number.isFinite(change) ? `Latest provider move is ${change >= 0 ? "+" : ""}${pct(change)}.` : "",
+    Number.isFinite(volumeRatio) && volumeRatio > 0 ? `Volume is ${num(volumeRatio)}x average.` : "",
+    Number.isFinite(rsi) ? `RSI is ${num(rsi, 1)}.` : "",
+    hasUsefulValue(technical.trend) ? `Trend is ${text(technical.trend)}.` : "",
+  ].filter(Boolean);
+  return {
+    ticker: text(first(data.ticker, data.symbol, normalized.symbol)),
+    score: Math.max(0, Math.min(100, computedScore)),
+    price,
+    change_pct: change,
+    signal: text(first(normalized.decision?.action, normalized.decision?.signal, data.signal, "WATCH")),
+    trend: text(first(technical.trend, data.trend)),
+    why,
+    upside_thesis: why.join(" "),
+  };
+}
+
+async function scannerFeed(sector = "All", limit = 12) {
+  try {
+    return await api(`/market/trade-scanner?limit=${limit}&sector=${encodeURIComponent(sector)}`);
+  } catch (reason: any) {
+    const settled = await Promise.allSettled(scannerUniverse(sector).map((symbol) =>
+      api(`/market/analysis?ticker=${encodeURIComponent(symbol)}&period=3mo&interval=1d&include_mtf=false`)
+    ));
+    const items = settled
+      .filter((result): result is PromiseFulfilledResult<AnyRecord> => result.status === "fulfilled")
+      .map((result) => scannerItemFromAnalysis(result.value))
+      .filter((item) => item.ticker !== "Not returned" && Number.isFinite(Number(item.price)))
+      .sort((a, b) => Number(b.score || 0) - Number(a.score || 0))
+      .slice(0, limit);
+    if (!items.length) throw new Error(reason?.message || "Scanner data temporarily unavailable.");
+    return {
+      items,
+      method: "Fallback scan from provider-backed market analysis.",
+      updated_at: new Date().toISOString(),
+    };
+  }
+}
+
 async function companyProfile(ticker: string) {
   let rich: AnyRecord = {};
   try {
@@ -415,11 +519,9 @@ function useWorkspace(ticker: string, timeframe: Timeframe) {
     setError("");
 
     try {
-      const tf = TIMEFRAME_API[timeframe];
-      const includeMtf = tf.interval === "1d";
       const [analysisResult, companyResult, fundamentalResult, planResult, newsResult, macroResult] =
         await Promise.allSettled([
-          api(`/market/analysis?ticker=${encodeURIComponent(ticker)}&period=${tf.period}&interval=${tf.interval}&include_mtf=${includeMtf}`),
+          marketAnalysis(ticker, timeframe),
           companyProfile(ticker),
           api(`/fundamental/${encodeURIComponent(ticker)}`),
           api(`/trade-plan?ticker=${encodeURIComponent(ticker)}`),
@@ -1433,7 +1535,7 @@ function TopMoversPanel({macro, scanner}: {macro: AnyRecord; scanner?: AnyRecord
     if (movers.length || loading || failed) return;
     let live = true;
     setLoading(true);
-    api("/market/trade-scanner?limit=12&sector=All")
+    scannerFeed("All", 12)
       .then((result) => {
         if (live) setFallbackScanner(result || {});
       })
@@ -1473,7 +1575,7 @@ function ScannerPage({ticker}: {ticker: string}) {
     setLoading(true);
     setError("");
     try {
-      const result = await api(`/market/trade-scanner?limit=20&sector=${encodeURIComponent(selectedSector)}`);
+      const result = await scannerFeed(selectedSector, 20);
       setScanner(result || {});
     } catch (e: any) {
       setError(e?.message || "Scanner API request failed.");
