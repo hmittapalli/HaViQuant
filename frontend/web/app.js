@@ -230,12 +230,29 @@ const marketCap = () => {
 async function api(path, options = {}) {
   const token = localStorage.getItem("haviquant_access_token");
   const headers = {"Content-Type": "application/json", ...(options.headers || {}), ...(token ? {Authorization: `Bearer ${token}`} : {})};
-  const r = await fetch(API + path, {...options, headers});
-  const raw = await r.text();
-  let data = null;
-  try { data = raw ? JSON.parse(raw) : null; } catch {}
-  if (!r.ok) throw Error(data?.detail || raw || `${r.status} API request failed`);
-  return data;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const r = await fetch(API + path, {...options, headers});
+      const raw = await r.text();
+      let data = null;
+      try { data = raw ? JSON.parse(raw) : null; } catch {}
+      if (!r.ok) {
+        const message = data?.detail || raw || `${r.status} API request failed`;
+        if ([429, 500, 502, 503, 504].includes(r.status) && attempt < 2) {
+          lastError = Error(message);
+          await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+          continue;
+        }
+        throw Error(message);
+      }
+      return data;
+    } catch (e) {
+      lastError = e;
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+    }
+  }
+  throw lastError || Error("API request failed");
 }
 
 async function apiFirst(paths) {
@@ -1376,9 +1393,10 @@ function plannerResults(data, recommendations) {
     <section class="planner-result-head">
       <div><span>AI Decision</span><strong class="${decision === "WAIT" ? "warn" : "good"}">${esc(decision)}</strong><em>${esc(data.summary || "")}</em></div>
       <div><span>Deploy</span><strong>${money(allocation.allocated_capital)}</strong><em>Cash reserve ${money(data.cash_reserve)}</em></div>
-      <div><span>Expected Profit</span><strong>${money(data.expected_profit)}</strong><em>Expected return ${pct(Number(data.expected_portfolio_return || 0) * 100)}</em></div>
-      <div><span>Max Planned Risk</span><strong>${money(data.maximum_expected_loss)}</strong><em>Confidence ${num(data.confidence, 0)}/100</em></div>
+      <div><span>Potential Profit</span><strong>${money(first(data.potential_profit_at_target, data.expected_profit))}</strong><em>Expected value ${first(data.expected_value, null) === null ? "Not estimated" : money(data.expected_value)}</em></div>
+      <div><span>Planned Risk</span><strong>${money(first(data.planned_risk, data.maximum_expected_loss))}</strong><em>Confidence ${num(data.confidence, 0)}/100</em></div>
     </section>
+    <div class="planner-mode ${data.planner_mode === "fallback" ? "limited" : "full"}">${data.planner_mode === "fallback" ? "Limited analysis" : "Full analysis"}</div>
     ${card("Market Environment", `
       ${rows({
         Regime: regime.regime,
@@ -1410,12 +1428,15 @@ function plannerCard(item, index) {
       ${metric("Entry", money(item.entry))}
       ${metric("Capital", money(item.capital_allocation))}
       ${metric("Shares", num(item.shares, 3))}
-      ${metric("Target", money(item.target_1))}
+      ${metric("HaVi Score", hasValue(item.havi_score) ? `${num(item.havi_score, 0)}/100` : "-")}
+      ${metric("Target 1", money(item.target_1))}
+      ${metric("Target 2", money(item.target_2))}
       ${metric("Stop", money(item.stop_loss))}
-      ${metric("Risk / Reward", hasValue(item.risk_reward) ? `1 : ${num(item.risk_reward)}` : "-")}
+      ${metric("Risk / Reward", hasValue(first(item.reward_risk_ratio, item.risk_reward)) ? `1 : ${num(first(item.reward_risk_ratio, item.risk_reward))}` : "-")}
       ${metric("Expected Return", pct(Number(item.expected_return || 0) * 100))}
-      ${metric("Expected Profit", money(item.expected_profit))}
-      ${metric("Possible Loss", money(item.possible_loss))}
+      ${metric("Potential Profit", money(first(item.potential_profit_at_target, item.expected_profit)))}
+      ${metric("Potential Loss", money(first(item.potential_loss_at_stop, item.possible_loss)))}
+      ${metric("Expected Value", first(item.expected_value, null) === null ? "Not estimated" : money(item.expected_value))}
       ${metric("Positive Probability", hasValue(item.positive_probability) ? pct(Number(item.positive_probability) * 100) : "-")}
     </div>
     <div class="horizon-grid">${horizons.map(([label, h]) => `<div><b>${esc(label.toUpperCase())}</b><span>${pct(Number(h.expected_return || 0) * 100)}</span><em>${pct(Number(h.positive_probability || 0) * 100)} positive</em><small>${pct(Number(h.low_return || 0) * 100)} to ${pct(Number(h.high_return || 0) * 100)}</small></div>`).join("")}</div>
@@ -1489,31 +1510,29 @@ async function plannerFallback(reason) {
     .filter((item) => hasValue(item.ticker) && Number.isFinite(Number(item.price)))
     .sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
   const selected = candidates.slice(0, Math.max(1, Number(form.number_of_positions || 1)));
-  const usableCapital = Math.max(0, Number(form.capital || 0) - Number(form.max_loss_amount || 0));
-  const perPosition = selected.length ? usableCapital / selected.length : 0;
   const recommendations = selected.map((item) => {
     const price = firstNumber(item.price, item.current_price) || 0;
-    const target = firstNumber(item.estimated_target_price, price ? price * 1.04 : null);
-    const stop = price ? price * 0.97 : null;
-    const expectedReturn = price && target ? (target / price) - 1 : 0;
-    const shares = price ? perPosition / price : 0;
     const confidence = Math.max(0, Math.min(100, Number(item.score || 0)));
     return {
       ticker: item.ticker,
       company: item.company || item.sector || "",
       strategy: form.strategy === "auto" ? "swing_trade" : form.strategy,
+      data_quality: "partial",
+      planner_mode: "fallback",
       confidence,
+      havi_score: confidence,
       current_price: price,
       entry: price,
-      capital_allocation: perPosition,
-      shares: form.allow_fractional_shares ? shares : Math.floor(shares),
-      target_1: target,
-      stop_loss: stop,
-      risk_reward: price && target && stop && price > stop ? (target - price) / (price - stop) : null,
-      expected_return: expectedReturn,
-      expected_profit: perPosition * expectedReturn,
-      possible_loss: Number(form.max_loss_amount || 0) / selected.length,
-      positive_probability: confidence / 100,
+      capital_allocation: null,
+      shares: null,
+      target_1: firstNumber(item.estimated_target_price),
+      stop_loss: null,
+      risk_reward: null,
+      expected_profit: null,
+      expected_value: null,
+      potential_profit_at_target: null,
+      potential_loss_at_stop: null,
+      positive_probability: null,
       evidence: {
         technical: {status: item.trend || item.signal || "WATCH", score: confidence},
         volume: {status: hasValue(item.volume_ratio) ? `${num(item.volume_ratio)}x average` : "Returned by scanner"},
@@ -1525,19 +1544,23 @@ async function plannerFallback(reason) {
       articles: item.articles,
     };
   });
-  const allocated = recommendations.reduce((sum, item) => sum + Number(item.capital_allocation || 0), 0);
-  const expectedProfit = recommendations.reduce((sum, item) => sum + Number(item.expected_profit || 0), 0);
+  const safeReason = String(reason || "Planner unavailable").includes("Not Found")
+    ? "Planner service is not available in this deployed backend."
+    : String(reason || "Planner unavailable");
   return {
     decision: recommendations.length ? "REVIEW" : "WAIT",
+    planner_mode: "fallback",
+    fallback_code: "PLANNER_UNAVAILABLE",
     summary: recommendations.length
-      ? "Planner endpoint was unavailable in prod, so HaViQuant built a provider-backed plan from live scanner and market analysis data."
+      ? "Limited analysis: planner intelligence was unavailable, so only scanner-backed candidates are shown."
       : "Planner endpoint was unavailable and no provider-backed scanner candidates were returned.",
     recommendations,
-    allocation: {allocated_capital: allocated},
-    cash_reserve: Math.max(0, Number(form.capital || 0) - allocated),
-    expected_profit: expectedProfit,
-    expected_portfolio_return: allocated ? expectedProfit / allocated : 0,
-    maximum_expected_loss: Number(form.max_loss_amount || 0),
+    allocation: {allocated_capital: 0},
+    cash_reserve: Number(form.capital || 0),
+    potential_profit_at_target: null,
+    expected_value: null,
+    expected_portfolio_return: 0,
+    maximum_expected_loss: 0,
     confidence: recommendations.length
       ? recommendations.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / recommendations.length
       : 0,
@@ -1545,7 +1568,9 @@ async function plannerFallback(reason) {
       regime: "Provider-backed fallback",
       trend: "Scanner derived",
       volatility: "Confirm live",
-      confidence: recommendations.length ? 55 : 0,
+      confidence: recommendations.length
+        ? recommendations.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / recommendations.length
+        : 0,
       market_data_as_of: new Date().toISOString(),
       evidence: recommendations.map((item) => ({symbol: item.ticker, price: item.current_price, change_pct: first(candidates.find((c) => c.ticker === item.ticker)?.change_pct, 0)})),
     },
@@ -1555,7 +1580,7 @@ async function plannerFallback(reason) {
       reason: "Lower scanner rank than selected candidates",
       score: item.score,
     })),
-    warnings: ["Planner API route was not available in production. This fallback uses returned scanner and market-analysis data only."],
+    warnings: [safeReason],
   };
 }
 
@@ -1569,7 +1594,7 @@ async function runPlanner() {
   state.plannerError = "";
   renderContent();
   try {
-    state.planner = await api("/trade-planner/analyze", {
+    state.planner = await api("/planner/analyze", {
       method: "POST",
       body: JSON.stringify({
         ...form,

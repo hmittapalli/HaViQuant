@@ -352,19 +352,39 @@ async function postApi(path: string, body: AnyRecord, token?: string | null) {
   const headers: Record<string, string> = {"Content-Type": "application/json"};
   if (token) headers.Authorization = `Bearer ${token}`;
 
-  const response = await fetch(`${API}${path}`, {
-    body: JSON.stringify(body),
-    headers,
-    method: "POST",
-  });
-  const raw = await response.text();
-  const data = parseJson(raw);
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`${API}${path}`, {
+        body: JSON.stringify(body),
+        headers,
+        method: "POST",
+      });
+      const raw = await response.text();
+      const data = parseJson(raw);
 
-  if (!response.ok) {
-    throw new Error(data?.detail || raw || `API request failed (${response.status})`);
+      if (!response.ok) {
+        const message = data?.detail || raw || `API request failed (${response.status})`;
+        const retryable = [429, 500, 502, 503, 504].includes(response.status);
+        if (retryable && attempt < 2) {
+          lastError = new Error(message);
+          await delay(500 * (attempt + 1));
+          continue;
+        }
+        throw new Error(message);
+      }
+
+      return data;
+    } catch (e: any) {
+      lastError = e instanceof Error ? e : new Error(e?.message || "Network request failed");
+      if (attempt < 2) {
+        await delay(500 * (attempt + 1));
+        continue;
+      }
+    }
   }
 
-  return data;
+  throw lastError || new Error("Network request failed");
 }
 
 function parseJson(raw: string) {
@@ -2028,46 +2048,49 @@ function AITradePlannerPage({ticker}: {ticker: string}) {
   const buildFallbackPlan = useCallback(async (reason: string) => {
     const scan = await scannerFeed("All", 12);
     const candidates = arr(scan.items).slice(0, Math.max(1, Number(positions) || 1));
-    const usableCapital = Math.max(0, Number(capital || 0) - Number(maxLoss || 0));
-    const perPosition = candidates.length ? usableCapital / candidates.length : 0;
     const recommendations = candidates.map((item) => {
       const price = firstNumber(item.price, item.current_price) || 0;
-      const target = firstNumber(item.estimated_target_price, price ? price * 1.04 : null);
-      const stop = price ? price * 0.97 : null;
-      const expectedReturn = price && target ? target / price - 1 : 0;
       const confidence = Math.max(0, Math.min(100, Number(first(item.score, item.rank_score, item.technical_score, 0))));
       return {
         ...item,
+        data_quality: "partial",
         confidence,
+        havi_score: confidence,
         current_price: price,
         entry: price,
-        capital_allocation: perPosition,
-        shares: price ? perPosition / price : 0,
-        target_1: target,
-        stop_loss: stop,
-        expected_return: expectedReturn,
-        expected_profit: perPosition * expectedReturn,
-        possible_loss: candidates.length ? Number(maxLoss || 0) / candidates.length : 0,
+        capital_allocation: null,
+        shares: null,
+        target_1: firstNumber(item.estimated_target_price),
+        stop_loss: null,
+        potential_profit_at_target: null,
+        expected_value: null,
+        potential_loss_at_stop: null,
         strategy: strategy === "auto" ? "swing_trade" : strategy,
+        why_selected: arr(item.why),
+        risk_factors: ["Limited analysis: planner intelligence endpoint was unavailable."],
       };
     });
-    const allocated = recommendations.reduce((sum, item) => sum + Number(item.capital_allocation || 0), 0);
-    const expectedProfit = recommendations.reduce((sum, item) => sum + Number(item.expected_profit || 0), 0);
+    const safeReason = String(reason || "Planner unavailable").includes("Not Found")
+      ? "Planner service is not available in this deployed backend."
+      : String(reason || "Planner unavailable");
     return {
       decision: recommendations.length ? "REVIEW" : "WAIT",
+      planner_mode: "fallback",
+      fallback_code: "PLANNER_UNAVAILABLE",
       summary: recommendations.length
-        ? "Planner API was unavailable, so this plan was built from live scanner and market-analysis data."
+        ? "Limited analysis: planner intelligence was unavailable, so only scanner-backed candidates are shown."
         : "Planner API was unavailable and no scanner candidates were returned.",
       recommendations,
-      allocation: {allocated_capital: allocated},
-      cash_reserve: Math.max(0, Number(capital || 0) - allocated),
-      expected_profit: expectedProfit,
-      expected_portfolio_return: allocated ? expectedProfit / allocated : 0,
-      maximum_expected_loss: Number(maxLoss || 0),
+      allocation: {allocated_capital: 0},
+      cash_reserve: Number(capital || 0),
+      potential_profit_at_target: null,
+      expected_value: null,
+      expected_portfolio_return: 0,
+      maximum_expected_loss: 0,
       confidence: recommendations.length
         ? recommendations.reduce((sum, item) => sum + Number(item.confidence || 0), 0) / recommendations.length
         : 0,
-      warnings: [`Fallback used because planner route failed: ${reason}`],
+      warnings: [safeReason],
     };
   }, [capital, maxLoss, positions, strategy]);
 
@@ -2087,7 +2110,7 @@ function AITradePlannerPage({ticker}: {ticker: string}) {
         portfolio_aware: false,
       };
       try {
-        setPlanner(await postApi("/trade-planner/analyze", body));
+        setPlanner(await postApi("/planner/analyze", body));
       } catch (e: any) {
         setPlanner(await buildFallbackPlan(e?.message || "Planner API unavailable"));
       }
@@ -2160,12 +2183,14 @@ function AITradePlannerPage({ticker}: {ticker: string}) {
               ["Decision", text(planner.decision)],
               ["Deploy", money(planner.allocation?.allocated_capital)],
               ["Cash Reserve", money(planner.cash_reserve)],
-              ["Expected Profit", money(planner.expected_profit)],
-              ["Max Risk", money(planner.maximum_expected_loss)],
+              ["Potential Profit", money(first(planner.potential_profit_at_target, planner.expected_profit))],
+              ["Planned Risk", money(first(planner.planned_risk, planner.maximum_expected_loss))],
+              ["Expected Value", hasUsefulValue(planner.expected_value) ? money(planner.expected_value) : "Not estimated"],
               ["Confidence", `${num(planner.confidence, 0)}/100`],
             ]}
           />
           <Panel title="Planner Summary">
+            <Text style={styles.noticeText}>{planner.planner_mode === "fallback" ? "LIMITED ANALYSIS" : "FULL ANALYSIS"}</Text>
             <Text style={styles.longText}>{text(planner.summary)}</Text>
             {arr(planner.warnings).slice(0, 2).map((warning, index) => (
               <Text key={index} style={styles.noticeText}>{text(warning)}</Text>
@@ -2197,12 +2222,16 @@ function PlannerCandidate({item, rank}: {item: AnyRecord; rank: number}) {
           ["Entry", money(first(item.entry, item.current_price, item.price))],
           ["Capital", money(item.capital_allocation)],
           ["Shares", num(item.shares, 3)],
-          ["Target", money(first(item.target_1, item.estimated_target_price))],
+          ["Target 1", money(first(item.target_1, item.estimated_target_price))],
+          ["Target 2", money(item.target_2)],
           ["Stop", money(item.stop_loss)],
-          ["Expected Profit", money(item.expected_profit)],
+          ["Risk / Reward", hasUsefulValue(first(item.reward_risk_ratio, item.risk_reward)) ? num(first(item.reward_risk_ratio, item.risk_reward), 2) : "Not returned"],
+          ["Potential Profit", money(first(item.potential_profit_at_target, item.expected_profit))],
+          ["Potential Loss", money(first(item.potential_loss_at_stop, item.possible_loss))],
+          ["Expected Value", hasUsefulValue(item.expected_value) ? money(item.expected_value) : "Not estimated"],
         ]}
       />
-      <Text style={styles.longText}>{text(first(item.upside_thesis, arr(item.why)[0], "Review the returned evidence before acting."))}</Text>
+      <Text style={styles.longText}>{text(first(arr(item.why_selected)[0], item.upside_thesis, arr(item.why)[0], "Review the returned evidence before acting."))}</Text>
     </View>
   );
 }

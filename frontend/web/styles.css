@@ -1169,6 +1169,22 @@ nav button.active {
   font-style: normal;
   line-height: 1.45;
 }
+.planner-mode {
+  border: 1px solid #145d73;
+  border-radius: 999px;
+  color: #6fe7ff;
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 1px;
+  margin: 0 0 12px;
+  padding: 7px 12px;
+  text-transform: uppercase;
+}
+.planner-mode.limited {
+  border-color: #6b4d18;
+  color: #f7c846;
+}
 .planner-evidence-strip {
   display: flex;
   flex-wrap: wrap;

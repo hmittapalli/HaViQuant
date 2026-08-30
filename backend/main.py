@@ -29,9 +29,12 @@ class TradePlannerRequest(BaseModel):
     capital: float = Field(gt=0)
     risk_profile: Literal["conservative", "balanced", "aggressive"] = "balanced"
     strategy: Literal["auto", "day_trade", "swing_trade", "position_trade", "long_term"] = "auto"
+    trade_horizon: Optional[Literal["auto", "day", "swing", "position", "long_term", "day_trade", "swing_trade", "position_trade"]] = None
     holding_period: Optional[str] = None
+    max_loss: Optional[float] = Field(default=None, ge=0)
     max_loss_amount: Optional[float] = Field(default=None, ge=0)
     max_loss_percent: Optional[float] = Field(default=None, ge=0, le=100)
+    positions: Optional[int] = Field(default=None, ge=1, le=5)
     number_of_positions: int = Field(default=3, ge=1, le=5)
     allow_fractional_shares: bool = True
     cash_reserve_percent: Optional[float] = Field(default=None, ge=0, le=100)
@@ -889,6 +892,17 @@ TRADE_PLANNER_WEIGHTS = {
     "position_trade": {"technical": .22, "momentum": .14, "volume": .08, "catalyst": .10, "fundamental": .28, "market": .18},
     "long_term": {"technical": .12, "momentum": .08, "volume": .04, "catalyst": .08, "fundamental": .48, "market": .20},
 }
+COMPOSITE_SCORE_WEIGHTS = {
+    "technical": .20,
+    "momentum": .12,
+    "trend": .12,
+    "volume": .08,
+    "fundamental": .12,
+    "sentiment": .08,
+    "market_regime": .10,
+    "risk_reward": .10,
+    "backtest": .08,
+}
 
 HORIZON_DAYS = {"1d": 1, "2d": 2, "5d": 5, "10d": 10, "20d": 20, "60d": 60}
 STRATEGY_HORIZONS = {
@@ -909,6 +923,44 @@ def bounded(value, lo=0, hi=100):
         return max(lo, min(hi, float(value)))
     except Exception:
         return lo
+
+
+def weighted_score(components, weights):
+    available = {
+        key: float(value)
+        for key, value in components.items()
+        if value is not None and math.isfinite(float(value))
+    }
+    total_weight = sum(weights.get(key, 0) for key in available)
+    if not available or total_weight <= 0:
+        return 0
+    return round(sum(available[key] * weights.get(key, 0) for key in available) / total_weight, 1)
+
+
+def normalize_strategy(value):
+    return {
+        "auto": "auto",
+        "day": "day_trade",
+        "day_trade": "day_trade",
+        "swing": "swing_trade",
+        "swing_trade": "swing_trade",
+        "position": "position_trade",
+        "position_trade": "position_trade",
+        "long_term": "long_term",
+    }.get(str(value or "auto"), "auto")
+
+
+def request_positions(req: TradePlannerRequest):
+    return max(1, min(5, int(req.positions or req.number_of_positions or 3)))
+
+
+def request_max_loss(req: TradePlannerRequest, profile):
+    loss = req.max_loss if req.max_loss is not None else req.max_loss_amount
+    if loss is None:
+        loss = req.capital * ((req.max_loss_percent or (profile["risk"] * 100)) / 100)
+    if loss > req.capital:
+        raise HTTPException(422, "max_loss cannot exceed capital")
+    return max(0, float(loss))
 
 
 def trend_score(label):
@@ -1000,6 +1052,9 @@ def planner_market_regime(seed_ticker="SPY"):
     sent = market_sentiment(indices)
     confidence = bounded(50 + abs(float(sent.get("score") or 50) - 50))
     return clean({
+        "label": "neutral_bullish" if sent.get("label") == "Bullish" else "risk_off" if sent.get("label") == "Bearish" else "neutral",
+        "score": sent.get("score"),
+        "summary": f"Market regime is {sent.get('label') or 'Mixed'} based on index breadth and VIX movement.",
         "regime": "risk_on" if sent.get("label") == "Bullish" else "risk_off" if sent.get("label") == "Bearish" else "neutral",
         "confidence": round(confidence, 1),
         "volatility": "elevated" if abs(float(sent.get("vix_change_pct") or 0)) >= 2 else "normal",
@@ -1037,6 +1092,7 @@ def planner_candidate(symbol, market_regime, strategy):
     catalyst = bounded(50 + catalyst_delta)
     market = 70 if market_regime.get("regime") == "risk_on" else 32 if market_regime.get("regime") == "risk_off" else 50
     scores = {}
+    trend_component = trend_score(a.get("trend"))
     for name, weights in TRADE_PLANNER_WEIGHTS.items():
         scores[name] = round(
             tech * weights["technical"] +
@@ -1051,15 +1107,54 @@ def planner_candidate(symbol, market_regime, strategy):
     entry = float(a.get("price") or 0)
     stop = float(a.get("levels", {}).get("stop") or 0)
     target = float(a.get("levels", {}).get("target1") or 0)
+    target2 = float(a.get("levels", {}).get("target2") or 0) or None
+    atr = float(a.get("atr") or 0)
     forecasts = historical_forecasts(symbol, entry, stop, target)
     applicable = {k: forecasts.get(k) for k in STRATEGY_HORIZONS.get(chosen_strategy, ["5d"]) if forecasts.get(k)}
     selected_forecast = next((v for v in applicable.values() if not v.get("insufficient_data")), None)
+    selected_horizon = next((k for k, v in applicable.items() if v == selected_forecast), None)
     expected = float(selected_forecast.get("expected_return") if selected_forecast else 0)
     low = float(selected_forecast.get("low_return") if selected_forecast else -abs((entry - stop) / entry) if entry and stop else 0)
     high = float(selected_forecast.get("high_return") if selected_forecast else (target / entry - 1) if entry and target else 0)
     risk_per_share = max(0, entry - stop) if entry and stop else None
     reward_per_share = max(0, target - entry) if entry and target else None
     rr = reward_per_share / risk_per_share if risk_per_share else None
+    rr_score = bounded((rr or 0) * 32)
+    backtest_score = selected_forecast.get("confidence") if selected_forecast else None
+    score_breakdown = {
+        "technical": tech,
+        "momentum": momentum,
+        "trend": trend_component,
+        "volume": volume,
+        "fundamental": fund_score if fund_evidence else None,
+        "sentiment": catalyst if n else None,
+        "market_regime": market,
+        "risk_reward": rr_score if rr else None,
+        "backtest": backtest_score,
+    }
+    havi_score = weighted_score(score_breakdown, COMPOSITE_SCORE_WEIGHTS)
+    confidence = weighted_score(
+        {"havi": havi_score, "provider": scores.get(chosen_strategy), "backtest": backtest_score, "risk_reward": rr_score},
+        {"havi": .45, "provider": .25, "backtest": .15, "risk_reward": .15},
+    )
+    unavailable = [key for key, value in score_breakdown.items() if value is None]
+    why_selected = [
+        f"Technical setup score is {round(tech, 1)} with {a.get('trend')} trend.",
+        f"Momentum is {a.get('momentum')} and RSI is {round(float(a.get('rsi') or 0), 1)}.",
+        f"Volume is {round(float(a.get('volume_ratio') or 0), 2)}x average.",
+    ]
+    if rr:
+        why_selected.append(f"Reward/risk is {round(rr, 2)} using provider ATR-based levels.")
+    if selected_forecast:
+        why_selected.append(f"{selected_horizon} historical setups show {round(float(selected_forecast.get('positive_probability') or 0) * 100, 1)}% positive outcomes.")
+    risk_factors = []
+    if market_regime.get("regime") == "risk_off":
+        risk_factors.append("Market regime is risk-off, reducing allocation confidence.")
+    if float(policy.get("score") or 0) >= 55:
+        risk_factors.append(f"Policy/news heat is {round(float(policy.get('score') or 0), 1)} and should be confirmed.")
+    if unavailable:
+        risk_factors.append("Some optional planner data was unavailable: " + ", ".join(unavailable) + ".")
+    invalidation = f"Break below {round(stop, 2)} would invalidate this long setup." if stop else "No valid stop was returned; setup should remain under review."
     evidence = {
         "technical": {"score": tech, "status": a.get("trend"), "evidence": [{"metric": "Setup quality", "value": a.get("setup_quality")}, {"metric": "RSI", "value": a.get("rsi")}, {"metric": "MACD", "value": a.get("macd")}]},
         "momentum": {"score": momentum, "status": a.get("momentum"), "evidence": [{"metric": "Trend", "value": a.get("trend")}]},
@@ -1079,23 +1174,45 @@ def planner_candidate(symbol, market_regime, strategy):
         "strategy": chosen_strategy,
         "holding_period": ", ".join(applicable.keys()) if applicable else None,
         "scores": scores,
-        "selected_score": scores.get(chosen_strategy),
+        "selected_score": havi_score,
+        "havi_score": havi_score,
+        "setup_quality": round(scores.get(chosen_strategy, 0), 1),
+        "score_breakdown": score_breakdown,
         "entry": entry,
+        "entry_low": entry - atr * .2 if atr else entry,
+        "entry_high": entry + atr * .2 if atr else entry,
         "target_1": target,
+        "target_2": target2,
         "stop_loss": stop,
+        "stop": stop,
+        "risk_per_share": risk_per_share,
+        "reward_per_share": reward_per_share,
+        "reward_risk_ratio": rr,
         "risk_reward": rr,
         "expected_return": expected,
         "positive_probability": selected_forecast.get("positive_probability") if selected_forecast else None,
-        "confidence": round(min(scores.get(chosen_strategy, 0), selected_forecast.get("confidence", 45) if selected_forecast else 45), 1),
+        "win_probability": selected_forecast.get("positive_probability") if selected_forecast else None,
+        "confidence": confidence,
+        "selected_horizon": selected_horizon or chosen_strategy.replace("_trade", ""),
+        "horizon_reason": f"{chosen_strategy.replace('_', ' ')} was selected from the strongest weighted technical, momentum, volume, fundamental, and market-regime score.",
         "horizons": applicable,
         "scenarios": make_scenarios(expected, low, high, selected_forecast.get("confidence", 45) if selected_forecast else 45, float(policy.get("score") or 0)),
         "evidence": evidence,
+        "why_selected": why_selected,
+        "bull_case": why_selected[:3],
+        "risk_factors": risk_factors,
+        "invalidation_reason": invalidation,
+        "data_quality": "partial" if unavailable else "good",
+        "unavailable_components": unavailable,
         "warnings": ["Historical sample was insufficient for one or more horizons."] if any(v.get("insufficient_data") for v in applicable.values()) else [],
     })
 
 
 def build_trade_planner_response(req: TradePlannerRequest):
     profile = RISK_PROFILES[req.risk_profile]
+    strategy = normalize_strategy(req.trade_horizon or req.strategy)
+    position_count = request_positions(req)
+    max_loss = request_max_loss(req, profile)
     market_regime = planner_market_regime((req.symbols or ["SPY"])[0])
     sector = urllib.parse.unquote(req.sector or "All")
     symbols = req.symbols or [x.get("ticker") for x in trade_scanner(limit=20, sector=sector).get("items", [])]
@@ -1103,29 +1220,32 @@ def build_trade_planner_response(req: TradePlannerRequest):
     rejected = []
     for raw_symbol in symbols[:20]:
         try:
-            c = planner_candidate(norm_ticker(raw_symbol), market_regime, req.strategy)
+            c = planner_candidate(norm_ticker(raw_symbol), market_regime, strategy)
             if float(c.get("selected_score") or 0) >= profile["min_score"] and c.get("risk_reward") and float(c["risk_reward"]) >= 1:
                 candidates.append(c)
             else:
                 rejected.append({"ticker": raw_symbol, "reason": "Below planner score or risk/reward threshold", "score": c.get("selected_score"), "risk_reward": c.get("risk_reward")})
         except Exception as e:
             rejected.append({"ticker": raw_symbol, "reason": str(e)})
-    candidates.sort(key=lambda x: (x.get("confidence") or 0, x.get("selected_score") or 0), reverse=True)
-    selected = candidates[:req.number_of_positions]
+    candidates.sort(key=lambda x: (x.get("havi_score") or 0, x.get("risk_reward") or 0, x.get("confidence") or 0), reverse=True)
+    selected = candidates[:position_count]
     reserve_pct = req.cash_reserve_percent if req.cash_reserve_percent is not None else profile["reserve"]
     deployable = req.capital * (1 - reserve_pct / 100)
-    max_loss = req.max_loss_amount if req.max_loss_amount is not None else req.capital * ((req.max_loss_percent or (profile["risk"] * 100)) / 100)
     if not selected:
         return clean({
             "request": req.model_dump(),
+            "planner_mode": "full",
             "market_regime": market_regime,
             "decision": "WAIT",
+            "decision_reason": "No candidate passed score and reward/risk quality thresholds.",
             "summary": "No candidate met the minimum risk/reward, confidence, and data-quality criteria. Keep capital in cash until evidence improves.",
             "recommendations": [],
             "allocation": {"allocated_capital": 0, "cash_reserve": req.capital, "positions": []},
             "cash_reserve": req.capital,
             "expected_portfolio_return": 0,
-            "expected_profit": 0,
+            "potential_profit_at_target": 0,
+            "expected_value": None,
+            "planned_risk": 0,
             "maximum_expected_loss": 0,
             "confidence": market_regime.get("confidence"),
             "alternative_strategies": [],
@@ -1136,7 +1256,9 @@ def build_trade_planner_response(req: TradePlannerRequest):
         })
     per_position = deployable / len(selected)
     positions = []
-    total_expected_profit = 0
+    total_potential_profit = 0
+    total_expected_value = 0
+    expected_value_available = False
     total_risk = 0
     for c in selected:
         price = float(c.get("current_price") or 0)
@@ -1148,21 +1270,44 @@ def build_trade_planner_response(req: TradePlannerRequest):
             shares = math.floor(shares)
         capital_allocated = shares * price
         possible_loss = shares * risk_per_share
-        expected_profit = capital_allocated * float(c.get("expected_return") or 0)
-        total_expected_profit += expected_profit
+        potential_profit = shares * max(0, float(c.get("target_1") or price) - price)
+        win_probability = c.get("win_probability")
+        expected_value = None
+        if win_probability is not None:
+            expected_value_available = True
+            expected_value = (float(win_probability) * potential_profit) - ((1 - float(win_probability)) * possible_loss)
+            total_expected_value += expected_value
+        total_potential_profit += potential_profit
         total_risk += possible_loss
-        positions.append(clean({**c, "shares": shares, "capital_allocation": capital_allocated, "expected_profit": expected_profit, "possible_loss": possible_loss}))
+        positions.append(clean({
+            **c,
+            "rank": len(positions) + 1,
+            "shares": shares,
+            "capital": capital_allocated,
+            "capital_allocation": capital_allocated,
+            "potential_profit_at_target": potential_profit,
+            "potential_loss_at_stop": possible_loss,
+            "expected_value": expected_value,
+            "possible_loss": possible_loss,
+            "rank_reason": f"Ranks #{len(positions) + 1} by composite HaVi score, reward/risk, and confidence versus the other candidates.",
+        }))
     allocated = sum(p.get("capital_allocation") or 0 for p in positions)
+    decision = "BUY" if positions and market_regime.get("regime") == "risk_on" and statistics.mean([float(p.get("havi_score") or 0) for p in positions]) >= 72 else "REVIEW" if positions else "WAIT"
     return clean({
         "request": req.model_dump(),
+        "planner_mode": "full",
         "market_regime": market_regime,
-        "decision": "DEPLOY" if allocated > 0 else "WAIT",
+        "decision": decision,
+        "decision_reason": f"{len(positions)} qualified setup{'s' if len(positions) != 1 else ''} passed the planner score and risk filters.",
         "summary": f"HaViQuant found {len(positions)} provider-backed plan candidate{'s' if len(positions) != 1 else ''}. Allocation is constrained by risk profile, stop distance, confidence, and market regime.",
         "recommendations": positions,
         "allocation": {"allocated_capital": allocated, "cash_reserve": max(0, req.capital - allocated), "positions": positions},
         "cash_reserve": max(0, req.capital - allocated),
-        "expected_portfolio_return": (total_expected_profit / allocated) if allocated else 0,
-        "expected_profit": total_expected_profit,
+        "planned_risk": total_risk,
+        "expected_portfolio_return": (total_potential_profit / allocated) if allocated else 0,
+        "potential_profit_at_target": total_potential_profit,
+        "expected_profit": total_potential_profit,
+        "expected_value": total_expected_value if expected_value_available else None,
         "maximum_expected_loss": total_risk,
         "confidence": round(statistics.mean([float(p.get("confidence") or 0) for p in positions]), 1),
         "alternative_strategies": [{"strategy": k, "average_score": round(statistics.mean([p["scores"].get(k, 0) for p in positions]), 1)} for k in TRADE_PLANNER_WEIGHTS],
@@ -1175,6 +1320,11 @@ def build_trade_planner_response(req: TradePlannerRequest):
 
 @app.post("/api/v1/trade-planner/analyze")
 def trade_planner_analyze(req: TradePlannerRequest):
+    return build_trade_planner_response(req)
+
+
+@app.post("/api/v1/planner/analyze")
+def planner_analyze(req: TradePlannerRequest):
     return build_trade_planner_response(req)
 
 
