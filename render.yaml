@@ -1,0 +1,23 @@
+# Public frontend preview only. Production API/database rollout is not included.
+services:
+  - type: web
+    name: havi-world-preview
+    runtime: static
+    branch: v26.3-working-ui
+    rootDir: RecruitAI/frontend
+    buildCommand: npm install && npx tsc --noEmit && npm run build -- --configLoader runner
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /
+        destination: /world.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY

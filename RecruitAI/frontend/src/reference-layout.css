@@ -1,0 +1,7 @@
+.recruit-workspace .w-top{position:relative;min-height:78px;z-index:20}
+.recruit-workspace .w-content>.w-global-search{display:none}
+.havi-user-settings{position:relative}
+.recruit-workspace .havi-user-settings .w-user-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:30;padding:12px;border:1px solid #dbe5f2;border-radius:14px;background:#fff;box-shadow:0 12px 30px #17365a25}
+.recruit-workspace .havi-user-settings .theme-picker{position:static;display:flex!important;box-shadow:none;min-width:230px}
+.recruit-workspace .havi-logo{background:#fff url('/assets/havihire-logo.png') center/contain no-repeat;clip-path:none;border-radius:8px}
+.recruit-workspace .havi-logo b,.recruit-workspace .havi-logo:after{display:none}
