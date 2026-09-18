@@ -5,7 +5,7 @@ services:
     runtime: static
     branch: v26.3-working-ui
     rootDir: RecruitAI/frontend
-    buildCommand: npm install && npx tsc --noEmit && npm run build -- --configLoader runner
+    buildCommand: npm ci --include=dev && npx tsc --noEmit && npm run build -- --configLoader runner
     staticPublishPath: dist
     routes:
       - type: rewrite
