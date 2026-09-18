@@ -114,7 +114,7 @@ function Nav({ onSearch }: { onSearch: () => void }) {
         </div>
         <div className="nav-actions">
           <button className="icon-button" onClick={onSearch} aria-label="Search apps"><Search size={18} /></button>
-          <a className="nav-secondary" href="./index.html#Overview">Open HaViHire</a>
+          <a className="nav-secondary" href="./hire.html#Overview">Open HaViHire</a>
           <button className="nav-primary" onClick={() => (window.location.hash = 'home-apps')}>Get Started</button>
           <button className="menu-button" onClick={() => setMenuOpen((v) => !v)} aria-label="Menu">
             {menuOpen ? <X size={20} /> : <Menu size={20} />}
@@ -364,7 +364,7 @@ function ProductPage({ product }: { product: Product }) {
             <h1>{product.name}</h1>
             <h2>{product.headline}</h2>
             <p>{product.description}</p>
-            <div className="hero-actions">{product.id === "hire" ? <a className="button button-light" href="./index.html#Overview">Open Local Workspace <ArrowRight size={18}/></a> : product.id === "quant" ? <a className="button button-light" href={HAVIQUANT_URL}>Open HaViQuant <ArrowRight size={18}/></a> : <a className="button button-light" href="./invite.html">Open HaViInvite <ArrowRight size={18}/></a>}<a className="watch-button" href="#product-features">View Features</a></div>
+            <div className="hero-actions">{product.id === "hire" ? <a className="button button-light" href="./hire.html#Overview">Open Local Workspace <ArrowRight size={18}/></a> : product.id === "quant" ? <a className="button button-light" href={HAVIQUANT_URL}>Open HaViQuant <ArrowRight size={18}/></a> : <a className="button button-light" href="./invite.html">Open HaViInvite <ArrowRight size={18}/></a>}<a className="watch-button" href="#product-features">View Features</a></div>
           </div>
           <div className="product-page-card">
             <div className="product-page-card-top"><span>Illustrative concept · sample data</span><Bell size={17}/></div>

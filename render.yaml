@@ -7,10 +7,6 @@ services:
     rootDir: RecruitAI/frontend
     buildCommand: npm ci --include=dev && npx tsc --noEmit && npm run build -- --configLoader runner
     staticPublishPath: dist
-    routes:
-      - type: redirect
-        source: /
-        destination: /world.html
     headers:
       - path: /*
         name: X-Content-Type-Options
